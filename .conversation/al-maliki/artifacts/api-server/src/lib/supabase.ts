@@ -1,20 +1,119 @@
-import { createClient } from "@supabase/supabase-js";
+import { ReplitConnectors } from "@replit/connectors-sdk";
 
-const rawUrl = process.env["SUPABASE_URL"];
-const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+type QueryResult = { data: unknown; error: { message: string } | null };
 
-let supabaseClient: ReturnType<typeof createClient> | null = null;
+class RestQuery implements PromiseLike<QueryResult> {
+  private readonly filters: string[] = [];
+  private selectColumns = "*";
+  private orderBy: string | null = null;
+  private isSingle = false;
 
-if (rawUrl && key) {
-  function normalizeSupabaseUrl(raw: string): string {
-    if (raw.startsWith("https://") || raw.startsWith("http://")) return raw;
-    const pgMatch = raw.match(/db\.([a-z0-9]+)\.supabase\.co/);
-    if (pgMatch) return `https://${pgMatch[1]}.supabase.co`;
-    return raw;
+  constructor(private readonly table: string, private readonly method = "GET", private readonly payload?: unknown) {}
+
+  select(columns = "*") {
+    this.selectColumns = columns;
+    return this;
   }
-  const url = normalizeSupabaseUrl(rawUrl);
-  supabaseClient = createClient(url, key, { auth: { persistSession: false } });
+
+  order(column: string, options?: { ascending?: boolean }) {
+    this.orderBy = `${column}.${options?.ascending === false ? "desc" : "asc"}`;
+    return this;
+  }
+
+  eq(column: string, value: string | number | boolean) {
+    this.filters.push(`${encodeURIComponent(column)}=eq.${encodeURIComponent(String(value))}`);
+    return this;
+  }
+
+  single() {
+    this.isSingle = true;
+    return this;
+  }
+
+  then<TResult1 = QueryResult, TResult2 = never>(
+    onfulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): PromiseLike<TResult1 | TResult2> {
+    return this.execute().then(onfulfilled, onrejected);
+  }
+
+  private async execute(): Promise<QueryResult> {
+    const params = new URLSearchParams({ select: this.selectColumns });
+    if (this.orderBy) params.set("order", this.orderBy);
+    for (const filter of this.filters) {
+      const [key, value] = filter.split("=");
+      if (key && value) params.set(key, value);
+    }
+
+    try {
+      const response = await new ReplitConnectors().proxy(
+        "supabase",
+        `/${this.table}?${params.toString()}`,
+        {
+          method: this.method,
+          headers: {
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+          },
+          body: this.payload === undefined ? undefined : JSON.stringify(this.payload),
+        },
+      );
+      const body: Record<string, unknown> | unknown[] | null =
+        response.status === 204 ? null : await response.json().catch(() => null) as Record<string, unknown> | unknown[] | null;
+      if (!response.ok) {
+        const message = typeof body === "object" && body !== null && !Array.isArray(body) && typeof body.message === "string"
+          ? body.message
+          : `Supabase request failed (${response.status})`;
+        return { data: null, error: { message } };
+      }
+      return { data: this.isSingle && Array.isArray(body) ? body[0] ?? null : body, error: null };
+    } catch (error) {
+      return { data: null, error: { message: error instanceof Error ? error.message : "Supabase request failed" } };
+    }
+  }
 }
 
-export const supabase = supabaseClient;
-export const hasSupabase = !!supabaseClient;
+const client = {
+  from(table: string) {
+    return {
+      select: (columns = "*") => new RestQuery(table).select(columns),
+      upsert: (payload: unknown) => new RestQuery(table, "POST", payload),
+      delete: () => new RestQuery(table, "DELETE"),
+    };
+  },
+  storage: {
+    from(bucket: string) {
+      return {
+        async upload(path: string, body: Buffer, options: { contentType?: string; upsert?: boolean }) {
+          try {
+            const response = await new ReplitConnectors().proxy(
+              "supabase",
+              `/object/${bucket}/${path}`,
+              {
+                method: options.upsert ? "PUT" : "POST",
+                headers: { "Content-Type": options.contentType ?? "application/octet-stream" },
+                body: body as unknown as string,
+              },
+            );
+            if (!response.ok) {
+              const result: unknown = await response.json().catch(() => null);
+              const message = typeof result === "object" && result !== null && "message" in result && typeof result.message === "string"
+                ? result.message
+                : `Storage upload failed (${response.status})`;
+              return { error: { message } };
+            }
+            return { error: null };
+          } catch (error) {
+            return { error: { message: error instanceof Error ? error.message : "Storage upload failed" } };
+          }
+        },
+        getPublicUrl(path: string) {
+          return { data: { publicUrl: `/api/storage/${bucket}/${path}` } };
+        },
+      };
+    },
+  },
+};
+
+export const supabase = client;
+export const hasSupabase = true;
