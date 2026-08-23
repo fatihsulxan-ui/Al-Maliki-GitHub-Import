@@ -1,0 +1,2 @@
+- [AL-RISALA import quirks](al-risala-import.md) — Supabase db.ts needs `sb()` as-any cast; Express 5 early-returns must split `res.json()` and `return;` separately.
+- [AL-RISALA auth roles](al-risala-auth.md) — Admin/waiter tokens are distinct; `adminOnly` middleware for write routes, `authMiddleware` for shared routes.
