@@ -3,7 +3,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { adminOnly, store } from "./store.js";
-import { uploadImageToSupabase, uploadLogoToSupabase } from "../lib/db.js";
+import { downloadStorageObject, uploadImageToSupabase, uploadLogoToSupabase } from "../lib/db.js";
+import { dbSetSetting } from "../lib/db.js";
 import { hasSupabase } from "../lib/supabase.js";
 
 const memStorage = multer.memoryStorage();
@@ -43,6 +44,25 @@ router.get("/images/:filename", (req, res) => {
   res.sendFile(filePath);
 });
 
+router.get("/storage/:bucket", async (req, res) => {
+  const bucket = req.params.bucket;
+  const objectPath = typeof req.query.path === "string" ? decodeURIComponent(req.query.path) : "";
+  if (!["menu-images", "logos"].includes(bucket) ||
+      !objectPath || objectPath.includes("..") || !/^[a-zA-Z0-9/_-]+\.(jpg|jpeg|png|webp)$/.test(objectPath)) {
+    res.status(400).json({ error: "Invalid storage path" }); return;
+  }
+  try {
+    const response = await downloadStorageObject(bucket, objectPath);
+    if (!response.ok) { res.status(response.status).end(); return; }
+    const contentType = response.headers.get("content-type");
+    if (contentType) res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(Buffer.from(await response.arrayBuffer()));
+  } catch {
+    res.status(404).end();
+  }
+});
+
 router.post("/upload", adminOnly, upload.single("image"), async (req, res) => {
   if (!req.file) { res.status(400).json({ error: "No file" }); return; }
   try {
@@ -67,6 +87,7 @@ router.post("/upload/logo", adminOnly, upload.single("image"), async (req, res) 
     if (hasSupabase) {
       const url = await uploadLogoToSupabase(req.file.buffer, ext);
       store.settings.logo = url;
+      await dbSetSetting("logo", url);
       res.json({ url }); return;
     }
     // Local fallback

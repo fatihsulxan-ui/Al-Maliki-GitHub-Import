@@ -4,15 +4,14 @@ import authRouter from "./auth.js";
 import menuRouter, { initMenu } from "./menu.js";
 import categoriesRouter, { initCategories } from "./categories.js";
 import tablesRouter, { initTables } from "./tables.js";
-import waiterCallsRouter from "./waiter-calls.js";
+import waiterCallsRouter, { initWaiterCalls } from "./waiter-calls.js";
 import bundleRouter from "./bundle.js";
 import settingsRouter, { initSettings } from "./settings.js";
 import uploadRouter from "./upload.js";
-import ordersRouter from "./orders.js";
-import menuStatsRouter from "./menu-stats.js";
-import reviewsRouter from "./reviews.js";
+import ordersRouter, { initOrders } from "./orders.js";
+import menuStatsRouter, { initMenuStats } from "./menu-stats.js";
+import reviewsRouter, { initReviews } from "./reviews.js";
 import { store } from "./store.js";
-import { loadReviews } from "../lib/persist.js";
 
 const router: IRouter = Router();
 
@@ -29,13 +28,14 @@ router.use(ordersRouter);
 router.use(menuStatsRouter);
 router.use(reviewsRouter);
 
-export function initReviews() {
-  const saved = loadReviews();
-  if (saved.length > 0) {
-    store.reviews.push(...saved);
-    process.stdout.write(`[reviews] Loaded ${saved.length} reviews from disk\n`);
-  }
-}
-
-export { initTables, initSettings, initMenu, initCategories };
+export {
+  initTables,
+  initSettings,
+  initMenu,
+  initCategories,
+  initOrders,
+  initWaiterCalls,
+  initReviews,
+  initMenuStats,
+};
 export default router;

@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Redirect, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ClerkProvider, SignIn, SignUp, useAuth } from "@clerk/react";
+import { publishableKeyFromHost } from "@clerk/react/internal";
+import { shadcn } from "@clerk/themes";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
@@ -8,6 +11,12 @@ import MenuPage from "@/pages/menu";
 import { ChefHat, Settings } from "lucide-react";
 
 const LOGO_URL = "/images/arab-ali-hotel-mark.svg";
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+const clerkPubKey = publishableKeyFromHost(
+  window.location.hostname,
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
 
 const WaiterPage = lazy(() => import("@/pages/waiter"));
 const AdminPage  = lazy(() => import("@/pages/admin"));
@@ -176,14 +185,43 @@ function StaffLanding() {
   );
 }
 
+function ProtectedPage({ children }: { children: React.ReactNode }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <PageLoading />;
+  if (!isSignedIn) return <Redirect to="/sign-in" />;
+  return <>{children}</>;
+}
+
+function SignInPage() {
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
+      <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} />
+    </div>
+  );
+}
+
+function SignUpPage() {
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
+      <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} />
+    </div>
+  );
+}
+
 function Router() {
   return (
     <Suspense fallback={<PageLoading />}>
       <Switch>
         <Route path="/" component={StaffLanding} />
         <Route path="/masa/:tableId" component={MenuPage} />
-        <Route path="/garson" component={WaiterPage} />
-        <Route path="/admin" component={AdminPage} />
+        <Route path="/sign-in/*?" component={SignInPage} />
+        <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/garson">
+          <ProtectedPage><WaiterPage /></ProtectedPage>
+        </Route>
+        <Route path="/admin">
+          <ProtectedPage><AdminPage /></ProtectedPage>
+        </Route>
         <Route component={NotFound} />
       </Switch>
     </Suspense>
@@ -197,14 +235,60 @@ function App() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ClerkProvider
+      publishableKey={clerkPubKey}
+      proxyUrl={clerkProxyUrl}
+      appearance={{
+        theme: shadcn,
+        cssLayerName: "clerk",
+        options: {
+          logoPlacement: "inside",
+          logoLinkUrl: basePath || "/",
+          logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+        },
+        variables: {
+          colorPrimary: "#1B2A4A",
+          colorForeground: "#1B2A4A",
+          colorMutedForeground: "#6B7280",
+          colorBackground: "#FFFFFF",
+          colorInput: "#F8F5F0",
+          colorInputForeground: "#1B2A4A",
+          colorNeutral: "#E5E1DB",
+          fontFamily: "Inter, sans-serif",
+          borderRadius: "1rem",
+        },
+        elements: {
+          rootBox: "w-full flex justify-center",
+          cardBox: "bg-white rounded-3xl w-[440px] max-w-full overflow-hidden shadow-2xl",
+          card: "!shadow-none !border-0 !bg-transparent !rounded-none",
+          footer: "!shadow-none !border-0 !bg-transparent !rounded-none",
+          headerTitle: "text-[#1B2A4A]",
+          headerSubtitle: "text-stone-500",
+          socialButtonsBlockButtonText: "text-[#1B2A4A]",
+          formFieldLabel: "text-[#1B2A4A]",
+          footerActionLink: "text-[#C1440E]",
+          footerActionText: "text-stone-500",
+          dividerText: "text-stone-400",
+          formButtonPrimary: "bg-[#1B2A4A] hover:bg-[#243760]",
+          formFieldInput: "bg-[#F8F5F0] border-stone-200 text-[#1B2A4A]",
+        },
+      }}
+      signInUrl={`${basePath}/sign-in`}
+      signUpUrl={`${basePath}/sign-up`}
+      localization={{
+        signIn: { start: { title: "ARAB ALI HOTEL'e giriş yap", subtitle: "Personel paneline erişmek için Google ile devam edin" } },
+        signUp: { start: { title: "Personel hesabı oluştur", subtitle: "ARAB ALI HOTEL yönetimine başlamak için kaydolun" } },
+      }}
+    >
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <WouterRouter base={basePath}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ClerkProvider>
   );
 }
 

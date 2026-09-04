@@ -1,6 +1,15 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { initTables, initSettings, initReviews, initMenu, initCategories } from "./routes/index.js";
+import {
+  initTables,
+  initSettings,
+  initReviews,
+  initMenu,
+  initCategories,
+  initOrders,
+  initWaiterCalls,
+  initMenuStats,
+} from "./routes/index.js";
 import { INITIAL_MENU, INITIAL_CATEGORIES } from "./routes/data/initial-data.js";
 
 const rawPort = process.env["PORT"];
@@ -30,7 +39,10 @@ app.listen(port, async (err) => {
     await initCategories(INITIAL_CATEGORIES);
     await initTables();
     await initSettings();
-    initReviews();
+    await initOrders();
+    await initWaiterCalls();
+    await initReviews();
+    await initMenuStats();
     logger.info("Initial data setup complete");
   } catch (e) {
     logger.warn({ err: e }, "Initial data setup failed (may already exist)");

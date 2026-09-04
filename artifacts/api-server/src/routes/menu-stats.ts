@@ -1,11 +1,14 @@
 import { Router } from "express";
 import { store } from "./store.js";
+import { dbLoadMenuClicks, dbSaveMenuClick } from "../lib/db.js";
 
 const router = Router();
 
-router.post("/menu-stats/click/:itemId", (req, res) => {
+router.post("/menu-stats/click/:itemId", async (req, res) => {
   const { itemId } = req.params;
-  store.menuClicks.set(itemId, (store.menuClicks.get(itemId) ?? 0) + 1);
+  const clicks = (store.menuClicks.get(itemId) ?? 0) + 1;
+  await dbSaveMenuClick(itemId, clicks);
+  store.menuClicks.set(itemId, clicks);
   res.json({ ok: true });
 });
 
@@ -27,5 +30,15 @@ router.get("/menu-stats/popular", (_req, res) => {
     });
   res.json(result);
 });
+
+export async function initMenuStats() {
+  try {
+    const rows = await dbLoadMenuClicks();
+    store.menuClicks = new Map(rows.map(row => [row.itemId, row.clicks]));
+    process.stdout.write(`[menu-stats] Loaded ${rows.length} click counters from Supabase\n`);
+  } catch (error) {
+    process.stdout.write(`[menu-stats] Supabase not ready, starting empty: ${String(error)}\n`);
+  }
+}
 
 export default router;

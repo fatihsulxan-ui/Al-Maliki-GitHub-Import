@@ -8,7 +8,12 @@ class RestQuery implements PromiseLike<QueryResult> {
   private orderBy: string | null = null;
   private isSingle = false;
 
-  constructor(private readonly table: string, private readonly method = "GET", private readonly payload?: unknown) {}
+  constructor(
+    private readonly table: string,
+    private readonly method = "GET",
+    private readonly payload?: unknown,
+    private readonly upsert = false,
+  ) {}
 
   select(columns = "*") {
     this.selectColumns = columns;
@@ -53,7 +58,9 @@ class RestQuery implements PromiseLike<QueryResult> {
           method: this.method,
           headers: {
             "Content-Type": "application/json",
-            Prefer: "return=representation",
+            Prefer: this.upsert
+              ? "resolution=merge-duplicates,return=representation"
+              : "return=representation",
           },
           body: this.payload === undefined ? undefined : JSON.stringify(this.payload),
         },
@@ -77,7 +84,7 @@ const client = {
   from(table: string) {
     return {
       select: (columns = "*") => new RestQuery(table).select(columns),
-      upsert: (payload: unknown) => new RestQuery(table, "POST", payload),
+      upsert: (payload: unknown) => new RestQuery(table, "POST", payload, true),
       delete: () => new RestQuery(table, "DELETE"),
     };
   },
@@ -108,7 +115,7 @@ const client = {
           }
         },
         getPublicUrl(path: string) {
-          return { data: { publicUrl: `/api/storage/${bucket}/${path}` } };
+          return { data: { publicUrl: `/api/storage/${bucket}?path=${encodeURIComponent(path)}` } };
         },
       };
     },
