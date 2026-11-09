@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { nanoid } from "nanoid";
 import { adminOnly, store } from "./store.js";
 import { downloadStorageObject, uploadImageToSupabase, uploadLogoToSupabase } from "../lib/db.js";
 import { dbSetSetting } from "../lib/db.js";
@@ -89,11 +90,9 @@ router.post("/upload", adminOnly, upload.single("image"), async (req, res) => {
       res.status(415).json({ error: "Only valid JPEG, PNG, or WEBP image files are supported." });
       return;
     }
-    if (!hasSupabase) {
-      res.status(503).json({ error: "Persistent image storage is unavailable." });
-      return;
-    }
-    const url = await uploadImageToSupabase(req.file.buffer, ext, "menu");
+    const url = hasSupabase
+      ? await uploadImageToSupabase(req.file.buffer, ext, "menu")
+      : saveLocalFile(req.file.buffer, `menu-${nanoid(10)}${ext}`);
     res.json({ url });
   } catch {
     res.status(500).json({ error: "Upload failed" });
@@ -110,11 +109,9 @@ router.post("/upload/logo", adminOnly, upload.single("image"), async (req, res) 
       res.status(415).json({ error: "Only valid JPEG, PNG, or WEBP image files are supported." });
       return;
     }
-    if (!hasSupabase) {
-      res.status(503).json({ error: "Persistent image storage is unavailable." });
-      return;
-    }
-    const url = await uploadLogoToSupabase(req.file.buffer, ext);
+    const url = hasSupabase
+      ? await uploadLogoToSupabase(req.file.buffer, ext)
+      : saveLocalFile(req.file.buffer, `restaurant-logo-${nanoid(10)}${ext}`);
     await dbSetSetting("logo", url);
     store.settings.logo = url;
     res.json({ url });

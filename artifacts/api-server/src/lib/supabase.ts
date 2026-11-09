@@ -155,4 +155,6 @@ const client = {
 };
 
 export const supabase = client;
-export const hasSupabase = true;
+// The imported project may run without a connected Supabase integration.
+// Keep remote storage opt-in; the API uses its local data store otherwise.
+export const hasSupabase = process.env["SUPABASE_CONNECTOR_ENABLED"] === "true";

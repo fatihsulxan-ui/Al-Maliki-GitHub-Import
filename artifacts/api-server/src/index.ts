@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { hasSupabase } from "./lib/supabase.js";
 import {
   initTables,
   initSettings,
@@ -33,6 +34,9 @@ app.listen(port, async (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  if (!hasSupabase) {
+    logger.info("Supabase connector is not enabled; using local in-memory data.");
+  }
 
   try {
     await initMenu(INITIAL_MENU);
