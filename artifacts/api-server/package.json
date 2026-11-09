@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@clerk/express": "^2.1.61",
-    "@clerk/shared": "^4.29.3",
+    "@clerk/express": "^2.1.88",
+    "@clerk/shared": "^4.44.1",
     "@supabase/supabase-js": "^2.49.4",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

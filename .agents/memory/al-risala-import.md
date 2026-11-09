@@ -33,7 +33,7 @@ When Supabase is not configured (`hasSupabase === false`), uploads save to `arti
 ## Architecture
 
 - `@workspace/db` (Drizzle) and `@workspace/api-zod` are NOT used by this project.
-- `lib/db.ts` in api-server is Supabase-based; falls back to in-memory if env vars absent.
+- `lib/db.ts` in api-server is Supabase-based. Verify the current connection/fallback implementation before relying on older notes.
 - `data/reviews.json` persists reviews to disk as fallback.
 - Logo image 404 in dev is expected when Supabase Storage is not configured.
-- Menu and categories are seeded from `initial-data.ts` on first startup if Supabase is empty.
+- Menu and categories seed from `initial-data.ts` only after Supabase responds successfully with empty tables.
