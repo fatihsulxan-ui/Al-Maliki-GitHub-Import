@@ -88,6 +88,38 @@ const client = {
       delete: () => new RestQuery(table, "DELETE"),
     };
   },
+  async rpc(functionName: string, args: Record<string, unknown> = {}): Promise<QueryResult> {
+    try {
+      const response = await new ReplitConnectors().proxy(
+        "supabase",
+        `/rpc/${encodeURIComponent(functionName)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify(args),
+        },
+      );
+      const body: unknown = response.status === 204
+        ? null
+        : await response.json().catch(() => null) as unknown;
+      if (!response.ok) {
+        const message = typeof body === "object" && body !== null && "message" in body &&
+          typeof body.message === "string"
+          ? body.message
+          : `Supabase RPC failed (${response.status})`;
+        return { data: null, error: { message } };
+      }
+      return { data: body, error: null };
+    } catch (error) {
+      return {
+        data: null,
+        error: { message: error instanceof Error ? error.message : "Supabase RPC failed" },
+      };
+    }
+  },
   storage: {
     from(bucket: string) {
       return {

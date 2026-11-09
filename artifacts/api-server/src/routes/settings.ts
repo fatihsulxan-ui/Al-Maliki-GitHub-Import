@@ -1,54 +1,60 @@
 import { Router } from "express";
-import { store, adminOnly, isText, validImageUrl } from "./store.js";
-import { dbSetSetting } from "../lib/db.js";
+import { adminOnly, isText, store, validImageUrl } from "./store.js";
+import { dbGetSetting, dbSetSetting } from "../lib/db.js";
 
 const router = Router();
 
-router.get("/settings", adminOnly, (_req, res) => {
-  res.json({
-    restaurantName: store.settings.restaurantName,
-    logo: store.settings.logo,
-  });
+router.get("/settings", adminOnly, async (_req, res) => {
+  try {
+    const [restaurantName, logo] = await Promise.all([
+      dbGetSetting("restaurant_name"),
+      dbGetSetting("logo"),
+    ]);
+    res.json({ restaurantName: restaurantName || "ARAB ALI HOTEL", logo: logo || null });
+  } catch {
+    res.status(503).json({ error: "Settings are temporarily unavailable." });
+  }
 });
 
 router.patch("/settings", adminOnly, async (req, res) => {
-  const body = req.body as Partial<{
-    restaurantName: string;
-    logo: string | null;
-  }>;
-  if (body.restaurantName !== undefined && !isText(body.restaurantName, 120) ||
-      body.logo !== undefined && body.logo !== null && !validImageUrl(body.logo) ||
-      false) {
-    res.status(400).json({ error: "Invalid settings" }); return;
+  const body = req.body as Record<string, unknown>;
+  const fields = new Set(["restaurantName", "logo"]);
+  if (Object.keys(body).some((key) => !fields.has(key)) ||
+      (body["restaurantName"] !== undefined && !isText(body["restaurantName"], 120)) ||
+      (body["logo"] !== undefined && body["logo"] !== null && !validImageUrl(body["logo"])) ||
+      Object.keys(body).length === 0) {
+    res.status(400).json({ error: "Invalid settings." });
+    return;
   }
-
-  if (body.restaurantName !== undefined) {
-    store.settings.restaurantName = body.restaurantName;
-    await dbSetSetting("restaurant_name", body.restaurantName);
+  try {
+    if (body["restaurantName"] !== undefined) {
+      await dbSetSetting("restaurant_name", body["restaurantName"] as string);
+    }
+    if (body["logo"] !== undefined) {
+      await dbSetSetting("logo", (body["logo"] as string | null) ?? "");
+    }
+    if (body["restaurantName"] !== undefined) {
+      store.settings.restaurantName = body["restaurantName"] as string;
+    }
+    if (body["logo"] !== undefined) {
+      store.settings.logo = (body["logo"] as string | null) ?? null;
+    }
+    res.json({
+      restaurantName: store.settings.restaurantName,
+      logo: store.settings.logo,
+    });
+  } catch {
+    res.status(503).json({ error: "Settings could not be saved." });
   }
-
-  if (body.logo !== undefined) {
-    store.settings.logo = body.logo;
-    await dbSetSetting("logo", body.logo ?? "");
-  }
-
-  res.json({
-    restaurantName: store.settings.restaurantName,
-    logo: store.settings.logo,
-  });
 });
 
 export async function initSettings() {
-  try {
-    const { dbGetSetting } = await import("../lib/db.js");
-    const logo = await dbGetSetting("logo");
-    const name = await dbGetSetting("restaurant_name");
-    if (logo) store.settings.logo = logo;
-    if (name) store.settings.restaurantName = name;
-    process.stdout.write(`[settings] Loaded from Supabase: logo=${!!logo}, name=${name}\n`);
-  } catch {
-    process.stdout.write(`[settings] Supabase not ready, using defaults\n`);
-  }
+  const [restaurantName, logo] = await Promise.all([
+    dbGetSetting("restaurant_name"),
+    dbGetSetting("logo"),
+  ]);
+  store.settings.restaurantName = restaurantName || "ARAB ALI HOTEL";
+  store.settings.logo = logo || null;
 }
 
 export default router;

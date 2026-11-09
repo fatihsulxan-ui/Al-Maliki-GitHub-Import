@@ -1,20 +1,28 @@
 import { Router } from "express";
-import { store } from "./store.js";
+import { dbGetSetting, dbLoadCategories, dbLoadMenu } from "../lib/db.js";
 
 const router = Router();
 
-router.get("/bundle", (req, res) => {
+router.get("/bundle", async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  const visibleMenu = store.menu.filter(m => !m.hidden);
-  const categories = [...store.categories].sort((a, b) => a.order - b.order);
-  res.json({
-    menu: visibleMenu,
-    categories,
-    settings: {
-      restaurantName: store.settings.restaurantName,
-      logo: store.settings.logo,
-    },
-  });
+  try {
+    const [menu, categories, restaurantName, logo] = await Promise.all([
+      dbLoadMenu(),
+      dbLoadCategories(),
+      dbGetSetting("restaurant_name"),
+      dbGetSetting("logo"),
+    ]);
+    res.json({
+      menu: menu.filter((item) => !item.hidden),
+      categories: categories.sort((a, b) => a.order - b.order),
+      settings: {
+        restaurantName: restaurantName || "ARAB ALI HOTEL",
+        logo: logo || null,
+      },
+    });
+  } catch {
+    res.status(503).json({ error: "Menu is temporarily unavailable." });
+  }
 });
 
 export default router;

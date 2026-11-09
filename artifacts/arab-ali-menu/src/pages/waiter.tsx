@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useClerk } from "@clerk/react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Bell, CheckCircle, AlertCircle, Wifi, RefreshCw, Volume2, VolumeX,
@@ -6,17 +7,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useInterval } from "@/hooks/use-interval";
-import { useLocation } from "wouter";
 
 type WLang = "en" | "am" | "om";
 
 const W: Record<string, Record<WLang, string>> = {
   title:         { en: "Waiter Panel",              am: "አስተናጋጅ ፓነል",              om: "Panala Qoree Bitaa"        },
-  pinLabel:      { en: "Enter your PIN",             am: "PIN ያስገቡ",                om: "PIN kee galchi"            },
-  loginBtn:      { en: "Login →",                   am: "ግባ →",                    om: "Seeni →"                   },
-  wrongPin:      { en: "Wrong PIN. Try again.",      am: "ስህተት PIN። እንደገና ሞክሩ።",  om: "PIN dogoggoraa. Irra deebi'i." },
-  back:          { en: "← Back",                    am: "← ተመለስ",                 om: "← Deebi'i"                 },
   calls:         { en: "Calls",                     am: "ጥሪዎች",                   om: "Waamicha"                  },
   orders:        { en: "Orders",                    am: "ትዕዛዞች",                  om: "Ajajawwan"                 },
   active:        { en: "active",                    am: "ንቁ",                      om: "socho'aa"                  },
@@ -40,6 +35,12 @@ const W: Record<string, Record<WLang, string>> = {
   cancelOrder:   { en: "❌ Cancel",                  am: "❌ ሰርዝ",                   om: "❌ Haquu"                   },
   note:          { en: "Note",                      am: "ማስታወሻ",                  om: "Yaadaannoo"                },
   totalPrice:    { en: "Total",                     am: "ጠቅላላ",                   om: "Walii Gala"                },
+  item:          { en: "item",                      am: "እቃ",                       om: "meeshaa"                   },
+  items:         { en: "items",                     am: "እቃዎች",                    om: "meeshaalee"                },
+  minute:        { en: "min",                       am: "ደቂቃ",                     om: "daqiiqaa"                  },
+  justNow:       { en: "just now",                  am: "አሁን",                      om: "amma"                      },
+  completed:     { en: "completed",                 am: "ተጠናቋል",                  om: "xumurame"                  },
+  tableUnavailable: { en: "Table unavailable",      am: "ጠረጴዛው አይገኝም",            om: "Teessumni hin jiru"        },
 };
 const wt = (key: string, lang: WLang) => W[key]?.[lang] ?? key;
 
@@ -61,6 +62,8 @@ const STATUS_CONFIG: Record<OrderStatus, { color: string; bg: string; border: st
 
 
 const API_BASE = "/api";
+const staffFetch = (url: string, options: RequestInit = {}) =>
+  fetch(url, { ...options, credentials: "same-origin" });
 
 function useNotificationSound() {
   const ctx = useRef<AudioContext | null>(null);
@@ -90,115 +93,20 @@ function useNotificationSound() {
 }
 
 export default function WaiterPage() {
-  const [pin, setPin]           = useState("");
-  const [isLogged, setIsLogged] = useState(false);
-  const [error, setError]       = useState("");
-  const [shake, setShake]       = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [, navigate]            = useLocation();
+  const { signOut } = useClerk();
   const [lang, setLang]         = useState<WLang>(() => {
     try { const s = localStorage.getItem("staff_lang") as WLang; return (s === "en" || s === "am" || s === "om") ? s : "en"; } catch { return "en"; }
   });
-  const [loginLangOpen, setLoginLangOpen] = useState(false);
   const changeLang = (l: WLang) => {
     setLang(l); try { localStorage.setItem("staff_lang", l); } catch {}
   };
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); setLoading(true); setError("");
-    try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "waiter", pin }),
-      });
-      if (res.ok) { setIsLogged(true); }
-      else { setError(W.wrongPin[lang]); setPin(""); setShake(true); setTimeout(() => setShake(false), 500); }
-    } catch {
-      setError(W.wrongPin[lang]); setPin(""); setShake(true); setTimeout(() => setShake(false), 500);
-    } finally { setLoading(false); }
-  };
-
-  if (!isLogged) {
-    return (
-      <div className="min-h-[100dvh] bg-gradient-to-br from-[#F8F5F0] to-[#EDE8E2] flex items-center justify-center p-4"
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          <div className="absolute -top-32 -right-32 w-[400px] h-[400px] rounded-full bg-[#C1440E]/6" />
-          <div className="absolute -bottom-32 -left-32 w-[400px] h-[400px] rounded-full bg-[#1B2A4A]/5" />
-        </div>
-        {/* Login lang dropdown */}
-        <div className="absolute top-4 right-4 z-10">
-          <button onClick={() => setLoginLangOpen(o => !o)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-200 rounded-full text-xs font-bold text-stone-600 shadow-sm touch-manipulation">
-            <Globe className="w-3.5 h-3.5" />
-            {lang === "en" ? "🇬🇧 EN" : lang === "am" ? "🇪🇹 AM" : "🇪🇹 OM"}
-            <ChevronDown className="w-3 h-3 opacity-50" />
-          </button>
-          <AnimatePresence>
-            {loginLangOpen && (
-              <>
-                <div className="fixed inset-0" onClick={() => setLoginLangOpen(false)} />
-                <motion.div
-                  initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-0 mt-1.5 bg-white border border-stone-200 rounded-xl shadow-lg overflow-hidden min-w-[110px]"
-                >
-                  {([["en", "🇬🇧", "English"], ["am", "🇪🇹", "አማርኛ"], ["om", "🇪🇹", "Oromiffa"]] as const).map(([l, flag, label]) => (
-                    <button key={l} onClick={() => { changeLang(l); setLoginLangOpen(false); }}
-                      className={cn("w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold hover:bg-stone-50 transition-colors text-left",
-                        lang === l ? "text-[#1B2A4A] bg-stone-50" : "text-stone-600")}>
-                      <span>{flag}</span>{label}
-                      {lang === l && <CheckCircle className="w-3 h-3 ml-auto text-[#1B2A4A]" />}
-                    </button>
-                  ))}
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>
-        </div>
-        <motion.div initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.3 }} className="relative w-full max-w-sm">
-          <div className="bg-white rounded-3xl shadow-2xl shadow-stone-200/80 overflow-hidden">
-            <div className="bg-[#1B2A4A] px-8 py-6 text-center">
-              <h1 className="text-white font-bold text-xl tracking-wide">{wt("title", lang)}</h1>
-            </div>
-            <div className="px-8 py-7 space-y-4">
-              <p className="text-center text-stone-400 text-sm">{wt("pinLabel", lang)}</p>
-              <form onSubmit={handleLogin} className="space-y-4">
-                <motion.input type="password" inputMode="numeric" value={pin}
-                  onChange={e => setPin(e.target.value)} placeholder="• • • •"
-                  animate={shake ? { x: [-6, 6, -5, 5, -3, 3, 0] } : {}}
-                  transition={{ duration: 0.4 }}
-                  className="w-full bg-stone-50 border-2 border-stone-200 focus:border-[#1B2A4A] text-center text-4xl tracking-[0.6em] text-[#1B2A4A] rounded-2xl py-5 outline-none transition-colors font-bold placeholder:text-stone-300 placeholder:text-2xl placeholder:tracking-[0.5em]"
-                  autoFocus />
-                <AnimatePresence>
-                  {error && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                      className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm">
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <button type="submit" disabled={!pin || loading}
-                  className="w-full bg-[#1B2A4A] hover:bg-[#243760] text-white font-bold py-4 rounded-2xl transition-colors disabled:opacity-30 text-sm touch-manipulation flex items-center justify-center gap-2">
-                  {loading
-                    ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{lang === "en" ? "Verifying…" : lang === "am" ? "እያረጋገጡ…" : "Mirkaneessaa jira…"}</>
-                    : wt("loginBtn", lang)}
-                </button>
-              </form>
-              <button onClick={() => navigate("/")}
-                className="w-full text-stone-400 hover:text-stone-600 text-sm py-3 transition-colors touch-manipulation">
-                {wt("back", lang)}
-              </button>
-            </div>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  return <WaiterDashboard lang={lang} setLang={changeLang} onLogout={() => { setIsLogged(false); navigate("/"); }} />;
+  return (
+    <WaiterDashboard
+      lang={lang}
+      setLang={changeLang}
+      onLogout={async () => { await signOut(); }}
+    />
+  );
 }
 
 function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l: WLang) => void; onLogout: () => void }) {
@@ -212,20 +120,20 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
 
   const { data: calls = [], isFetching } = useQuery({
     queryKey: ["waiter-calls"],
-    queryFn: async () => { const r = await fetch(`${API_BASE}/waiter-calls`); return r.ok ? r.json() : []; },
+    queryFn: async () => { const r = await staffFetch(`${API_BASE}/waiter-calls`, { cache: "no-store" }); return r.ok ? r.json() : []; },
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 4_000,
   });
   const { data: tables = [] } = useQuery({
     queryKey: ["waiter-tables"],
-    queryFn: async () => { const r = await fetch(`${API_BASE}/tables`); return r.ok ? r.json() : []; },
+    queryFn: async () => { const r = await staffFetch(`${API_BASE}/tables`, { cache: "no-store" }); return r.ok ? r.json() : []; },
     staleTime: 5 * 60_000,
   });
   const { data: orders = [] } = useQuery<Order[]>({
     queryKey: ["waiter-orders"],
-    queryFn: async () => { const r = await fetch(`${API_BASE}/orders`); return r.ok ? r.json() : []; },
+    queryFn: async () => { const r = await staffFetch(`${API_BASE}/orders`, { cache: "no-store" }); return r.ok ? r.json() : []; },
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 4_000,
   });
 
   const tableMap = new Map((tables as any[]).map((t: any) => [t.id, t]));
@@ -243,19 +151,14 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
     prevOrderCount.current = orders.length;
   }, [orders.length, muted, playCall]);
 
-  useInterval(() => {
-    queryClient.invalidateQueries({ queryKey: ["waiter-calls"] });
-    queryClient.invalidateQueries({ queryKey: ["waiter-orders"] });
-  }, 5000);
-
   const clearCall = useMutation({
-    mutationFn: async (tableId: string) => fetch(`${API_BASE}/waiter-calls/${tableId}`, { method: "DELETE" }),
+    mutationFn: async (tableId: string) => staffFetch(`${API_BASE}/waiter-calls/${tableId}`, { method: "DELETE" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["waiter-calls"] })
   });
 
   const updateStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: OrderStatus }) => {
-      const r = await fetch(`${API_BASE}/orders/${id}/status`, {
+      const r = await staffFetch(`${API_BASE}/orders/${id}/status`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
@@ -265,7 +168,7 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
   });
 
   const deleteOrder = useMutation({
-    mutationFn: async (id: string) => fetch(`${API_BASE}/orders/${id}`, { method: "DELETE" }),
+    mutationFn: async (id: string) => staffFetch(`${API_BASE}/orders/${id}`, { method: "DELETE" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["waiter-orders"] })
   });
 
@@ -453,7 +356,7 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
                     <p className="text-[11px] text-stone-400 mb-0.5 leading-tight">
                       {lang === "en" ? "Avg. time" : lang === "am" ? "አማካይ ጊዜ" : "Avg. time"}
                     </p>
-                    <p className="text-xl font-medium text-[#1B2A4A]">{avgMins} {lang === "en" ? "min" : "dk"}</p>
+                    <p className="text-xl font-medium text-[#1B2A4A]">{avgMins} {wt("minute", lang)}</p>
                   </div>
                 </div>
 
@@ -503,10 +406,12 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
                                   const total     = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
                                   const mins      = Math.floor((Date.now() - order.createdAt) / 60000);
                                   const timeLabel = isDelivered
-                                    ? (lang === "en" ? "completed" : "tamamlandı")
+                                    ? wt("completed", lang)
                                     : mins < 1
-                                    ? (lang === "en" ? "just now" : "az önce")
-                                    : `${mins} dk`;
+                                    ? wt("justNow", lang)
+                                    : `${mins} ${wt("minute", lang)}`;
+                                  const tableNumber = order.tableNumber ||
+                                    (tableMap.get(order.tableId) as { number?: number } | undefined)?.number;
 
                                   return (
                                     <motion.div
@@ -518,13 +423,33 @@ function WaiterDashboard({ lang, setLang, onLogout }: { lang: WLang; setLang: (l
                                     >
                                       {/* Card title */}
                                       <p className="text-[13px] font-semibold text-[#1B2A4A] mb-0.5 truncate">
-                                        {wt("table", lang)} {order.tableNumber || "?"}
+                                        {tableNumber
+                                          ? `${wt("table", lang)} ${tableNumber}`
+                                          : wt("tableUnavailable", lang)}
                                       </p>
 
                                       {/* Item summary */}
                                       <p className="text-[12px] text-stone-500 mb-2">
-                                        {itemCount} {lang === "en" ? "item" : "adet"} · {total.toLocaleString()} ETB
+                                        {itemCount} {wt(itemCount === 1 ? "item" : "items", lang)} · {total.toLocaleString()} ETB
                                       </p>
+
+                                      <div className="space-y-1 mb-2">
+                                        {order.items.map((item, index) => (
+                                          <div key={`${order.id}-${item.menuItemId}-${index}`} className="flex justify-between gap-2 text-[11px] text-stone-600">
+                                            <span className="min-w-0 truncate">
+                                              {item.quantity} × {item.name?.[lang] || item.name?.en || ""}
+                                            </span>
+                                            <span className="flex-shrink-0">
+                                              {(item.price * item.quantity).toLocaleString()} ETB
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {order.note && (
+                                        <p className="text-[11px] text-stone-600 bg-stone-50 rounded-lg px-2 py-1.5 mb-2 break-words">
+                                          <span className="font-semibold">{wt("note", lang)}:</span> {order.note}
+                                        </p>
+                                      )}
 
                                       {/* Time badge */}
                                       {!isDelivered && (

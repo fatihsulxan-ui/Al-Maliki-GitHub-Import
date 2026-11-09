@@ -7,12 +7,12 @@ import {
 import { cn } from "@/lib/utils";
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { INITIAL_MENU, INITIAL_CATEGORIES } from "@/lib/initial-data";
 import { motion, AnimatePresence } from "framer-motion";
 
 const API_BASE = "/api";
 const BUNDLE_KEY = "al_bundle_v3";
 const BUNDLE_TTL = 30 * 60_000;
+const BUNDLE_CACHE_WRITE_INTERVAL = 5 * 60_000;
 
 type Lang = "en" | "am" | "om";
 interface LangMap { en: string; am: string; om?: string; }
@@ -53,7 +53,17 @@ function readBundleCache(): Bundle | undefined {
   return undefined;
 }
 function writeBundleCache(data: Bundle) {
-  try { localStorage.setItem(BUNDLE_KEY, JSON.stringify({ data, ts: Date.now() })); } catch {}
+  try {
+    const now = Date.now();
+    const serializedData = JSON.stringify(data);
+    const raw = localStorage.getItem(BUNDLE_KEY);
+    if (raw) {
+      const cached = JSON.parse(raw) as { data?: Bundle; ts?: number };
+      if (JSON.stringify(cached.data) === serializedData &&
+          typeof cached.ts === "number" && now - cached.ts < BUNDLE_CACHE_WRITE_INTERVAL) return;
+    }
+    localStorage.setItem(BUNDLE_KEY, JSON.stringify({ data, ts: now }));
+  } catch {}
 }
 
 const ORDER_HISTORY_KEY = "al_last_order";
@@ -80,12 +90,50 @@ function clearLastOrder() {
   try { localStorage.removeItem(ORDER_HISTORY_KEY); } catch {}
 }
 
-const LOGO_URL = "/images/arab-ali-hotel-mark.svg";
 const INITIAL_BUNDLE: Bundle = {
-  menu: INITIAL_MENU as unknown as MenuItem[],
-  categories: INITIAL_CATEGORIES as unknown as Category[],
-  settings: { logo: LOGO_URL, restaurantName: "ARAB ALI HOTEL" },
+  menu: [],
+  categories: [],
+  settings: { logo: null, restaurantName: "ARAB ALI HOTEL" },
 };
+
+function FoodImage({
+  src,
+  alt,
+  className,
+  style,
+  loading = "lazy",
+  fallbackClassName = "absolute inset-0 flex items-center justify-center bg-stone-100",
+  iconClassName = "text-stone-300 text-6xl",
+}: {
+  src: string;
+  alt: string;
+  className: string;
+  style?: React.CSSProperties;
+  loading?: "eager" | "lazy";
+  fallbackClassName?: string;
+  iconClassName?: string;
+}) {
+  const [failed, setFailed] = useState(!src);
+  useEffect(() => setFailed(!src), [src]);
+  if (!src || failed) {
+    return (
+      <div className={fallbackClassName} role="img" aria-label={alt}>
+        <span className={iconClassName}>🍽</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      style={style}
+      loading={loading}
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 /* ── Item detail modal ── */
 const ItemDetailModal = memo(function ItemDetailModal({
@@ -101,16 +149,13 @@ const ItemDetailModal = memo(function ItemDetailModal({
         style={{ animation: "modalIn 0.18s ease-out" }}
       >
         <div className="relative w-full overflow-hidden bg-muted" style={{ paddingBottom: "88%" }}>
-          {item.image ? (
-            <img src={item.image} alt={gl(item.name)}
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ objectPosition: "center 35%", filter: "brightness(1.06) saturate(1.10)", transform: "scale(1.04)" }}
-              loading="eager" decoding="async" />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center bg-stone-100">
-              <span className="text-stone-300 text-6xl">🍽</span>
-            </div>
-          )}
+          <FoodImage
+            src={item.image}
+            alt={gl(item.name)}
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ objectPosition: "center 35%", filter: "brightness(1.06) saturate(1.10)", transform: "scale(1.04)" }}
+            loading="eager"
+          />
           <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/30 to-transparent" />
           <button onClick={onClose}
             className="absolute top-4 right-4 w-9 h-9 bg-black/40 hover:bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition-colors">
@@ -208,29 +253,46 @@ function CartDrawer({
   const placeOrder = async () => {
     if (status === "loading") return;
     const snapshot = Array.from(cart.values());
-    const snapTotal = snapshot.reduce((s, ci) => s + ci.item.price * ci.qty, 0);
     safeSet(setStatus, "loading" as const);
     try {
       const orderItems = snapshot.map(ci => ({
         menuItemId: ci.item.id,
-        name: ci.item.name,
-        price: ci.item.price,
         quantity: ci.qty,
       }));
       const res = await fetch(`${API_BASE}/orders`, {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableId,
-          tableNumber: parseInt(tableId) || 0,
           items: orderItems,
           note: note.trim() || undefined,
         }),
       });
       if (!res.ok) throw new Error("fail");
-      const saved: SavedOrder = { items: snapshot, total: snapTotal, note: note.trim(), placedAt: Date.now() };
+      const savedOrder = await res.json() as { items: Array<{ menuItemId: string; name: LangMap; price: number; quantity: number }> };
+      const savedItems = savedOrder.items.map((serverItem) => {
+        const cartItem = snapshot.find((entry) => entry.item.id === serverItem.menuItemId);
+        return {
+          item: {
+            ...(cartItem?.item ?? {
+              id: serverItem.menuItemId,
+              name: serverItem.name,
+              description: { en: "", am: "" },
+              category: "",
+              image: "",
+              hidden: false,
+            }),
+            name: serverItem.name,
+            price: serverItem.price,
+          },
+          qty: serverItem.quantity,
+        };
+      });
+      const savedTotal = savedItems.reduce((sum, entry) => sum + entry.item.price * entry.qty, 0);
+      const saved: SavedOrder = { items: savedItems, total: savedTotal, note: note.trim(), placedAt: Date.now() };
       onOrderPlaced(saved);
-      safeSet(setSuccessTotal, snapTotal);
+      safeSet(setSuccessTotal, savedTotal);
       safeSet(setStatus, "success" as const);
       timerRef.current = setTimeout(() => {
         if (mountedRef.current) handleClose();
@@ -370,10 +432,13 @@ function CartDrawer({
                       {lastOrder.items.map(ci => (
                         <div key={ci.item.id} className="flex items-center gap-3 bg-stone-50 rounded-2xl p-3 opacity-80">
                           <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
-                            {ci.item.image
-                              ? <img src={ci.item.image} alt={gl(ci.item.name)} className="w-full h-full object-cover" loading="lazy" />
-                              : <div className="w-full h-full flex items-center justify-center text-xl">🍽</div>
-                            }
+                            <FoodImage
+                              src={ci.item.image}
+                              alt={gl(ci.item.name)}
+                              className="w-full h-full object-cover"
+                              fallbackClassName="w-full h-full flex items-center justify-center bg-stone-100"
+                              iconClassName="text-xl"
+                            />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-[#1B2A4A] text-sm truncate">{gl(ci.item.name)}</p>
@@ -407,10 +472,13 @@ function CartDrawer({
                 items.map(ci => (
                   <div key={ci.item.id} className="flex items-center gap-3 bg-stone-50 rounded-2xl p-3">
                     <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
-                      {ci.item.image
-                        ? <img src={ci.item.image} alt={gl(ci.item.name)} className="w-full h-full object-cover" loading="lazy" />
-                        : <div className="w-full h-full flex items-center justify-center text-xl">🍽</div>
-                      }
+                      <FoodImage
+                        src={ci.item.image}
+                        alt={gl(ci.item.name)}
+                        className="w-full h-full object-cover"
+                        fallbackClassName="w-full h-full flex items-center justify-center bg-stone-100"
+                        iconClassName="text-xl"
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-[#1B2A4A] text-sm truncate">{gl(ci.item.name)}</p>
@@ -503,11 +571,12 @@ function ReviewModal({ open, onClose, tableId, lang }: {
     if (mood === null && stars === 0 && !comment.trim()) return;
     setStatus("sending");
     try {
-      await fetch(`${API_BASE}/orders`, {
+      const response = await fetch(`${API_BASE}/orders`, {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tableId, tableNumber: parseInt(tableId) || 0,
+          tableId,
           items: [],
           note: comment.trim() || undefined,
           rating: stars || undefined,
@@ -515,6 +584,7 @@ function ReviewModal({ open, onClose, tableId, lang }: {
           isReviewOnly: true,
         }),
       });
+      if (!response.ok) throw new Error("Review could not be saved");
       setStatus("done");
       setTimeout(handleClose, 2000);
     } catch {
@@ -657,7 +727,7 @@ function ReviewModal({ open, onClose, tableId, lang }: {
                     {lbl({ en: "Additional comments", am: "ተጨማሪ አስተያየት ካላችሁ", om: "Yaada dabalataa" })}
                   </p>
                   <textarea
-                    value={comment} onChange={e => setComment(e.target.value)} rows={3}
+                    value={comment} onChange={e => setComment(e.target.value)} rows={3} maxLength={200}
                     placeholder={lbl({
                       en: "Tell us what you loved or what we can improve…",
                       am: "ምን ማሻሻል እንዳለብን ይንገሩን…",
@@ -715,7 +785,7 @@ function MenuContent({ tableId }: { tableId: string }) {
   const { data: bundle = INITIAL_BUNDLE } = useQuery<Bundle>({
     queryKey: ["bundle"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/bundle`, { cache: "no-store" });
+      const res = await fetch(`${API_BASE}/bundle`, { cache: "no-store", credentials: "same-origin" });
       if (!res.ok) return cachedBundle ?? INITIAL_BUNDLE;
       const data = await res.json() as Bundle;
       writeBundleCache(data);
@@ -725,7 +795,7 @@ function MenuContent({ tableId }: { tableId: string }) {
     initialDataUpdatedAt: cachedBundle ? Date.now() - 5_000 : 0,
     staleTime: 0,
     gcTime: 30 * 60_000,
-    refetchInterval: 500,
+    refetchInterval: 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
@@ -734,11 +804,13 @@ function MenuContent({ tableId }: { tableId: string }) {
 
   const callWaiter = useMutation({
     mutationFn: async () => {
-      await fetch(`${API_BASE}/waiter-call`, {
+      const response = await fetch(`${API_BASE}/waiter-call`, {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tableId }),
       });
+      if (!response.ok) throw new Error("Waiter could not be called");
     },
     onSuccess: () => { setWaiterCalled(true); setTimeout(() => setWaiterCalled(false), 4000); },
   });
@@ -758,7 +830,10 @@ function MenuContent({ tableId }: { tableId: string }) {
       return next;
     });
     /* track click */
-    fetch(`${API_BASE}/menu-stats/click/${item.id}`, { method: "POST" }).catch(() => {});
+    fetch(`${API_BASE}/menu-stats/click/${encodeURIComponent(item.id)}?tableId=${encodeURIComponent(tableId)}`, {
+      method: "POST",
+      credentials: "same-origin",
+    }).catch(() => {});
   }, []);
 
   const adjustQty = useCallback((id: string, delta: number) => {
@@ -831,7 +906,7 @@ function MenuContent({ tableId }: { tableId: string }) {
           lang={lang}
           tableId={tableId}
           onQty={adjustQty}
-          onClose={() => { setCartOpen(false); setCart(new Map()); }}
+          onClose={() => setCartOpen(false)}
           lastOrder={lastOrder}
           onOrderPlaced={(o) => { writeLastOrder(o); setLastOrder(o); setCart(new Map()); }}
           onClearLastOrder={() => { clearLastOrder(); setLastOrder(null); }}
@@ -849,6 +924,14 @@ function MenuContent({ tableId }: { tableId: string }) {
             style={{ background: "linear-gradient(180deg, rgba(14,7,3,0.18), rgba(14,7,3,0.42))" }}
           >
             <div style={{ transform: "translateY(-4px)", padding: "0 24px" }}>
+              {bundle.settings.logo && (
+                <img
+                  src={bundle.settings.logo}
+                  alt=""
+                  className="mx-auto"
+                  style={{ maxWidth: 76, maxHeight: 34, objectFit: "contain", marginBottom: 8 }}
+                />
+              )}
               <div
                 aria-hidden="true"
                 style={{ height: 1, width: 52, background: "rgba(229,205,159,0.75)", margin: "0 auto 10px" }}
@@ -1002,10 +1085,13 @@ function MenuContent({ tableId }: { tableId: string }) {
                 className="menu-card flex flex-col bg-card rounded-2xl overflow-hidden shadow-sm border border-border/40 text-left h-full relative cursor-pointer"
                 style={{ animationDelay: `${Math.min(index, 5) * 40}ms` }}>
                 <div className="relative overflow-hidden bg-muted w-full flex-shrink-0" style={{ paddingBottom: "88%" }}>
-                  <img src={item.image} alt={gl(item.name)}
+                  <FoodImage
+                    src={item.image}
+                    alt={gl(item.name)}
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ objectPosition: "center 35%", filter: "brightness(1.06) saturate(1.10)", transform: "scale(1.04)" }}
-                    loading={index < 6 ? "eager" : "lazy"} decoding="async" />
+                    loading={index < 6 ? "eager" : "lazy"}
+                  />
                   {inCart && (
                     <div className="absolute top-2 right-2 bg-[#C1440E] text-white text-[11px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-sm">
                       {inCart.qty}

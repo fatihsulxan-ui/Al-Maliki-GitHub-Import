@@ -1,50 +1,50 @@
 import { Router } from "express";
-import { store, authMiddleware } from "./store.js";
-import {
-  dbDeleteWaiterCall,
-  dbLoadWaiterCalls,
-  dbSaveWaiterCall,
-} from "../lib/db.js";
+import { isText, authMiddleware } from "./store.js";
+import { dbDeleteWaiterCall, dbGetTable, dbIncrementWaiterCall, dbLoadWaiterCalls } from "../lib/db.js";
+import { allowPublicAction } from "./public-rate-limit.js";
 
 const router = Router();
 
-router.get("/waiter-calls", authMiddleware, (_req, res) => {
-  const calls = Array.from(store.waiterCalls.values())
-    .sort((a, b) => a.lastCalledAt - b.lastCalledAt);
-  res.json(calls);
+router.get("/waiter-calls", authMiddleware, async (_req, res) => {
+  try {
+    const calls = await dbLoadWaiterCalls();
+    res.json(calls.sort((a, b) => a.lastCalledAt - b.lastCalledAt));
+  } catch {
+    res.status(503).json({ error: "Waiter calls are temporarily unavailable." });
+  }
 });
 
 router.post("/waiter-call", async (req, res) => {
-  const { tableId } = req.body as { tableId?: string };
-  if (!tableId) { res.status(400).json({ error: "Missing tableId" }); return; }
-
-  const existing = store.waiterCalls.get(tableId);
-  const call = existing
-    ? { ...existing, count: existing.count + 1, lastCalledAt: Date.now() }
-    : { tableId, count: 1, lastCalledAt: Date.now() };
-  await dbSaveWaiterCall(call);
-  if (existing) {
-    Object.assign(existing, call);
-  } else {
-    store.waiterCalls.set(tableId, call);
+  const { tableId } = req.body as { tableId?: unknown };
+  if (!isText(tableId, 80)) {
+    res.status(400).json({ error: "A valid table is required." });
+    return;
   }
-  res.json({ ok: true });
+  try {
+    const table = await dbGetTable(tableId);
+    if (!table) {
+      res.status(400).json({ error: "This table is not valid." });
+      return;
+    }
+    if (!await allowPublicAction(req, res, "waiter-call", table.id, 3)) return;
+    await dbIncrementWaiterCall(table.id);
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ error: "The waiter could not be called. Please try again." });
+  }
 });
 
 router.delete("/waiter-calls/:tableId", authMiddleware, async (req, res) => {
-  await dbDeleteWaiterCall(req.params.tableId);
-  store.waiterCalls.delete(req.params.tableId);
-  res.status(204).end();
+  try {
+    await dbDeleteWaiterCall(req.params.tableId);
+    res.status(204).end();
+  } catch {
+    res.status(503).json({ error: "Waiter call could not be cleared." });
+  }
 });
 
-export async function initWaiterCalls() {
-  try {
-    const rows = await dbLoadWaiterCalls();
-    store.waiterCalls = new Map(rows.map(call => [call.tableId, call]));
-    process.stdout.write(`[waiter-calls] Loaded ${rows.length} calls from Supabase\n`);
-  } catch (error) {
-    process.stdout.write(`[waiter-calls] Supabase not ready, starting empty: ${String(error)}\n`);
-  }
+export async function initWaiterCalls(): Promise<void> {
+  await dbLoadWaiterCalls();
 }
 
 export default router;

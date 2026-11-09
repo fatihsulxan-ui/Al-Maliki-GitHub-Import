@@ -1,111 +1,172 @@
 import { Router } from "express";
-import { store, authMiddleware, isText } from "./store.js";
+import { nanoid } from "nanoid";
+import { authMiddleware, isText } from "./store.js";
 import type { Order, OrderItem, OrderStatus, Review } from "./store.js";
 import {
-  dbDeleteOrder,
   dbDeleteReview,
+  dbGetTable,
+  dbLoadMenu,
   dbLoadOrders,
   dbSaveOrder,
   dbSaveReview,
 } from "../lib/db.js";
+import { allowPublicAction } from "./public-rate-limit.js";
 
 const router = Router();
+const terminalStatuses: OrderStatus[] = ["delivered", "cancelled"];
 
-router.get("/orders", authMiddleware, (_req, res) => {
-  const orders = Array.from(store.orders.values())
-    .sort((a, b) => b.createdAt - a.createdAt);
-  res.json(orders);
+router.get("/orders", authMiddleware, async (req, res) => {
+  try {
+    const allOrders = await dbLoadOrders();
+    const includeArchived = req.query["includeArchived"] === "1";
+    res.json(includeArchived
+      ? allOrders
+      : allOrders.filter((order) => !terminalStatuses.includes(order.status)));
+  } catch {
+    res.status(503).json({ error: "Orders are temporarily unavailable." });
+  }
 });
 
 router.post("/orders", async (req, res) => {
-  const { tableId, tableNumber, items, note, rating, mood, isReviewOnly } = req.body as {
-    tableId: string;
-    tableNumber: number;
-    items: OrderItem[];
-    note?: string;
-    rating?: number;
-    mood?: string;
-    isReviewOnly?: boolean;
+  const body = req.body as {
+    tableId?: unknown;
+    items?: unknown;
+    note?: unknown;
+    rating?: unknown;
+    mood?: unknown;
+    isReviewOnly?: unknown;
   };
+  if (!isText(body.tableId, 80)) {
+    res.status(400).json({ error: "A valid table is required." });
+    return;
+  }
 
-  if (isReviewOnly) {
-    if (!isText(tableId, 80) || (note !== undefined && typeof note !== "string") ||
-        (rating !== undefined && (!Number.isInteger(rating) || rating < 0 || rating > 5)) ||
-        (mood !== undefined && (typeof mood !== "string" || mood.length > 80))) {
-      res.status(400).json({ error: "Invalid review" }); return;
+  try {
+    const table = await dbGetTable(body.tableId);
+    if (!table) {
+      res.status(400).json({ error: "This table is not valid." });
+      return;
     }
-    const review: Review = {
-      id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      tableId: tableId || "unknown",
-      tableNumber: tableNumber ?? 0,
-      mood: mood ?? null,
-      stars: rating ?? 0,
-      comment: note ?? "",
-      createdAt: Date.now(),
-    };
-    await dbSaveReview(review);
-    store.reviews.push(review);
-    res.status(201).json(review);
-    return;
-  }
+    const isReview = body.isReviewOnly === true;
+    if (!await allowPublicAction(req, res, isReview ? "review" : "order", table.id, isReview ? 3 : 5)) {
+      return;
+    }
 
-  if (!isText(tableId, 80) || !Array.isArray(items) || items.length < 1 || items.length > 100) {
-    res.status(400).json({ error: "Missing tableId or items" });
-    return;
+    if (isReview) {
+      if ((body.note !== undefined &&
+          (typeof body.note !== "string" || body.note.length > 200)) ||
+          (body.rating !== undefined &&
+          (!Number.isInteger(body.rating) || Number(body.rating) < 0 || Number(body.rating) > 5)) ||
+          (body.mood !== undefined &&
+          (typeof body.mood !== "string" || body.mood.length > 80))) {
+        res.status(400).json({ error: "Review text must be 200 characters or fewer." });
+        return;
+      }
+      const review: Review = {
+        id: `rev-${nanoid(12)}`,
+        tableId: table.id,
+        tableNumber: table.number,
+        mood: typeof body.mood === "string" ? body.mood : null,
+        stars: typeof body.rating === "number" ? body.rating : 0,
+        comment: typeof body.note === "string" ? body.note : "",
+        createdAt: Date.now(),
+      };
+      await dbSaveReview(review);
+      res.status(201).json(review);
+      return;
+    }
+
+    if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100) {
+      res.status(400).json({ error: "The order must contain at least one item." });
+      return;
+    }
+    const itemInput = body.items as Array<Record<string, unknown>>;
+    if (itemInput.some((item) =>
+      !item || !isText(item["menuItemId"], 80) ||
+      !Number.isInteger(item["quantity"]) ||
+      Number(item["quantity"]) < 1 || Number(item["quantity"]) > 100
+    )) {
+      res.status(400).json({ error: "The order contains invalid items." });
+      return;
+    }
+    if (body.note !== undefined &&
+        (typeof body.note !== "string" || body.note.length > 1000)) {
+      res.status(400).json({ error: "The order note is invalid." });
+      return;
+    }
+
+    const menu = await dbLoadMenu();
+    const byId = new Map(menu.filter((item) => !item.hidden).map((item) => [item.id, item]));
+    const validatedItems: OrderItem[] = [];
+    for (const item of itemInput) {
+      const menuItem = byId.get(item["menuItemId"] as string);
+      if (!menuItem) {
+        res.status(400).json({ error: "The order contains an unavailable menu item." });
+        return;
+      }
+      validatedItems.push({
+        menuItemId: menuItem.id,
+        name: menuItem.name,
+        price: menuItem.price,
+        quantity: Number(item["quantity"]),
+      });
+    }
+
+    const order: Order = {
+      id: `ord-${nanoid(12)}`,
+      tableId: table.id,
+      tableNumber: table.number,
+      items: validatedItems,
+      status: "pending",
+      createdAt: Date.now(),
+      ...(typeof body.note === "string" && body.note
+        ? { note: body.note }
+        : {}),
+    };
+    await dbSaveOrder(order);
+    res.status(201).json(order);
+  } catch {
+    res.status(503).json({ error: "The request could not be saved. Please try again." });
   }
-  if (items.some(item => !item || !isText(item.menuItemId, 80) || !isText(item.name?.en, 200) ||
-      !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 100)) {
-    res.status(400).json({ error: "Invalid order items" }); return;
-  }
-  const id = `ord-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  const order: Order = {
-    id,
-    tableId,
-    tableNumber: tableNumber ?? 0,
-    items,
-    status: "pending",
-    createdAt: Date.now(),
-    note: typeof note === "string" ? note.slice(0, 1000) : undefined,
-  };
-  await dbSaveOrder(order);
-  store.orders.set(id, order);
-  res.status(201).json(order);
 });
 
 router.patch("/orders/:id/status", authMiddleware, async (req, res) => {
-  const order = store.orders.get(req.params.id);
-  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-  const { status } = req.body as { status: OrderStatus };
+  const { status } = req.body as { status?: unknown };
   const valid: OrderStatus[] = ["pending", "preparing", "ready", "delivered", "cancelled"];
-  if (!valid.includes(status)) { res.status(400).json({ error: "Invalid status" }); return; }
-  const updatedOrder = { ...order, status };
-  await dbSaveOrder(updatedOrder);
-  store.orders.set(order.id, updatedOrder);
-  if (status === "delivered" || status === "cancelled") {
-    setTimeout(() => {
-      store.orders.delete(order.id);
-      void dbDeleteOrder(order.id).catch((error: unknown) => {
-        process.stderr.write(`[orders] Failed to remove expired order: ${String(error)}\n`);
-      });
-    }, 5 * 60_000);
+  if (typeof status !== "string" || !valid.includes(status as OrderStatus)) {
+    res.status(400).json({ error: "Invalid order status." });
+    return;
   }
-  res.json(updatedOrder);
+  try {
+    const order = (await dbLoadOrders()).find((row) => row.id === req.params.id);
+    if (!order) {
+      res.status(404).json({ error: "Order not found." });
+      return;
+    }
+    const updatedOrder = { ...order, status: status as OrderStatus };
+    await dbSaveOrder(updatedOrder);
+    res.json(updatedOrder);
+  } catch {
+    res.status(503).json({ error: "Order status could not be saved." });
+  }
 });
 
 router.delete("/orders/:id", authMiddleware, async (req, res) => {
-  await dbDeleteOrder(req.params.id);
-  store.orders.delete(req.params.id);
-  res.status(204).end();
+  try {
+    const order = (await dbLoadOrders()).find((row) => row.id === req.params.id);
+    if (!order) {
+      res.status(404).json({ error: "Order not found." });
+      return;
+    }
+    await dbSaveOrder({ ...order, status: "cancelled" });
+    res.status(204).end();
+  } catch {
+    res.status(503).json({ error: "Order could not be archived." });
+  }
 });
 
-export async function initOrders() {
-  try {
-    const rows = await dbLoadOrders();
-    store.orders = new Map(rows.map(order => [order.id, order]));
-    process.stdout.write(`[orders] Loaded ${rows.length} orders from Supabase\n`);
-  } catch (error) {
-    process.stdout.write(`[orders] Supabase not ready, starting empty: ${String(error)}\n`);
-  }
+export async function initOrders(): Promise<void> {
+  await dbLoadOrders();
 }
 
 export default router;

@@ -1,65 +1,49 @@
 # ARAB ALI HOTEL Digital Menu
 
-Restoran için masa bazlı QR kod menü sistemi. Müşteriler masalarındaki QR kodu tarayarak dijital menüyü görüntüler, garsonlar siparişleri ve masa çağrılarını takip eder, admin ise menüyü ve masaları yönetir.
+Masaya özel QR menü; müşteriler `/masa/:tableId` üzerinden menüyü görüntüler, sipariş ve garson çağrısı gönderir. Garson ve yönetici panelleri Clerk oturumu gerektirir.
 
-## Run & Operate
+## Çalıştırma
 
-- `pnpm --filter @workspace/api-server run dev` — API sunucusunu çalıştır (port 8080)
-- `pnpm --filter @workspace/restoran-menu run dev` — Frontend'i çalıştır (port 24236)
-- `pnpm run typecheck` — Tüm paketlerde TypeScript kontrolü
+- API: `pnpm --filter @workspace/api-server run dev`
+- Aktif web arayüzü: `pnpm --filter @workspace/arab-ali-menu run dev`
+- Typecheck: `pnpm --filter @workspace/api-server run typecheck` ve `pnpm --filter @workspace/arab-ali-menu run typecheck`
+- Web build: `pnpm --filter @workspace/arab-ali-menu run build`
 
-## Stack
+## Mimari
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- **Frontend:** React 19 + Vite, TailwindCSS v4, Wouter (router), TanStack Query, Framer Motion
-- **Backend:** Express 5, Pino logger
-- **Depolama:** Supabase (birincil) + in-memory fallback (Supabase yoksa otomatik devreye girer)
-- **Resim yükleme:** Multer, Supabase Storage
+- Aktif arayüz `artifacts/arab-ali-menu`; eski `restoran-menu` arayüzü kullanılmaz.
+- Web: React, Vite, Tailwind CSS, Wouter, TanStack Query ve Clerk.
+- API: Express 5; Clerk cookie oturumu ve sunucu tarafında rol denetimi.
+- Veri ve görseller Supabase'te kalıcıdır; uygulama belleği veritabanının yerine geçmez.
+- Supabase SQL Editor'da `supabase/schema.sql` bir kez çalıştırılmalıdır.
+- Supabase tablolarına erişim API sunucusundaki Replit Supabase bağlantısı üzerinden yapılır. İstemcide Supabase anahtarı kullanılmaz.
+- Menü, kategori, masa, ayarlar, sipariş, garson çağrısı, yorum ve menü tıklama kayıtları Supabase'te tutulur.
+- `orders` tablosundaki `delivered` ve `cancelled` kayıtları kalıcı arşivdir. Garson sorgusu bunları dışarıda bırakır; yönetici Dashboard sorgusu geçmişi dahil eder.
+- İlk menü/kategori örnek verisi yalnızca ilk kurulum işaretlenmemişse yüklenir. Sonradan tüm menü silinirse yeniden başlatma örnek veriyi geri getirmez.
 
-## Uygulama Rotaları
+## Rotalar
 
-| Rota | Açıklama |
-|---|---|
-| `/` | Personel giriş ekranı (Garson / Admin seçimi) |
-| `/masa/:tableId` | Müşteri menü sayfası (QR ile açılır) |
-| `/garson` | Garson paneli (siparişler, masa çağrıları) |
-| `/admin` | Admin paneli (menü yönetimi, masalar, ayarlar, QR kodlar) |
+| Rota | Erişim | Açıklama |
+|---|---|---|
+| `/` | Herkese açık | Personel giriş ekranı |
+| `/masa/:tableId` | Herkese açık | QR ile açılan müşteri menüsü |
+| `/sign-in` | Herkese açık | Clerk Google girişi |
+| `/sign-up/*` | Giriş sayfasına yönlendirilir | Herkese açık kayıt kapalıdır |
+| `/garson` | Clerk `waiter` rolü | Aktif siparişler ve masa çağrıları |
+| `/admin` | Clerk `admin` rolü | Menü, kategoriler, masalar, yorumlar, ayarlar ve raporlar |
 
-## API Rotaları
+Clerk kullanıcısının `publicMetadata.role` alanı `waiter` veya `admin` olmalıdır. Rol atanmamış kullanıcıya erişim verilmez. Yeni rol ataması Clerk yönetiminden yapılır.
 
-- `GET /api/healthz` — Sağlık kontrolü
-- `GET/POST /api/menu` — Menü öğeleri CRUD
-- `GET/POST /api/categories` — Kategoriler CRUD
-- `GET/POST /api/tables` — Masalar CRUD
-- `GET/POST /api/orders` — Siparişler
-- `GET/POST /api/waiter-calls` — Garson çağrıları
-- `GET/POST /api/settings` — Restoran ayarları (isim, logo vb.)
-- `POST /api/upload` — Görsel yükleme (Supabase Storage)
-- `GET /api/reviews` — Müşteri yorumları
-- `GET /api/menu-stats` — Menü istatistikleri
-- `GET /api/bundle` — Tüm veriyi tek seferde çek (menü+kategori+masa)
+## API notları
 
-## Mimari Notlar
+- `GET /api/auth/me` Clerk oturumunu ve rolü döndürür.
+- `GET /api/bundle` yalnızca görünür menü öğelerini ve restoran ayarlarını verir.
+- `GET /api/menu?showHidden=1` yalnızca admin oturumuna açıktır.
+- Sipariş, masa çağrısı, yorum ve menü tıklaması masa kimliğini sunucuda doğrular; sipariş fiyatı Supabase menüsünden hesaplanır.
+- `GET /api/orders` arşivlenmemiş kayıtları; `GET /api/orders?includeArchived=1` yönetici geçmişini döndürür.
+- Personel API çağrıları Clerk oturum çerezini aynı kök adresten gönderir.
+- İstek gövdelerinde menü, kategori, masa ve ayar alanları izin listesine göre doğrulanır.
 
-- `artifacts/api-server/src/routes/store.ts` — In-memory store (Supabase fallback)
-- `artifacts/api-server/src/lib/db.ts` — Supabase operasyonları (`sb()` cast ile)
-- `artifacts/api-server/src/lib/supabase.ts` — Supabase client (`hasSupabase` flag'i)
-- `artifacts/api-server/src/lib/persist.ts` — Yorumları diske kaydet (`data/reviews.json`)
-- `artifacts/api-server/src/routes/data/initial-data.ts` — Başlangıç seed verisi
+## Görsel kapsamı
 
-## Supabase Yapılandırması
-
-Supabase env vars yoksa uygulama in-memory modda çalışır (veriler sunucu yeniden başlatıldığında sıfırlanır). Kalıcı depolama için:
-- `SUPABASE_URL` ve `SUPABASE_ANON_KEY` env vars gerekli
-- Tablolar: `menu_items`, `categories`, `tables`, `settings`
-- Bucket'lar: `menu-images`, `logos`
-
-## User Preferences
-
-_Kullanıcı tercihleri buraya eklenir._
-
-## Gotchas
-
-- `supabase.from("table")` çağrıları `sb()` cast'i üzerinden yapılmalı (untyped client)
-- Express 5 route handler'larında erken return için `res.status(404).json({...}); return;` pattern'ini kullan (`return res.json(...)` TypeScript hatası verir)
-- Logo resmi Supabase Storage'dan geliyor — dev ortamında 404 beklenen bir durum
+Mevcut renkler, yazı tipleri, yerleşim ve animasyonlar korunur. Görsel değişiklik yalnızca açıkça istenirse yapılır.

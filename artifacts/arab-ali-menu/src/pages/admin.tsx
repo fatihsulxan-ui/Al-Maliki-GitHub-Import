@@ -8,12 +8,13 @@ import { INITIAL_MENU, INITIAL_CATEGORIES } from "@/lib/initial-data";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useClerk } from "@clerk/react";
 import {
   LogOut, UtensilsCrossed, Table2, Layers, Plus, Pencil, Trash2,
   Check, X, Download, LayoutDashboard, Bell,
   Package, AlertCircle,
   Camera, Save, ChevronDown, Search, Eye, EyeOff, Menu as MenuIcon,
-  Circle, Shield, KeyRound, TrendingUp, MousePointerClick, DollarSign, Star,
+  Circle, Shield, TrendingUp, MousePointerClick, DollarSign, Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { QRCodeCanvas } from "qrcode.react";
@@ -137,39 +138,17 @@ interface Category { id: string; name: LangMap; order: number; }
 interface Table { id: string; number: number; location: string; status: string; activeOrderCount: number; }
 interface Review { id: string; tableId: string; tableNumber: number; mood: string | null; stars: number; comment: string; createdAt: number; }
 
-function getToken() { try { return localStorage.getItem("admin_token") || ""; } catch { return ""; } }
-function storeToken(t: string) { try { localStorage.setItem("admin_token", t); } catch {} }
-function clearToken() { try { localStorage.removeItem("admin_token"); } catch {} }
 function authFetch(url: string, options: RequestInit = {}) {
-  return fetch(url, { ...options, headers: { ...options.headers as Record<string, string>, "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" } }).then(res => {
-    if (res.status === 401) {
-      clearToken();
-      window.dispatchEvent(new Event("admin-auth-expired"));
-    }
-    return res;
-  });
-}
-
-async function signInWithPin(pin: string): Promise<{ token: string } | null> {
-  try {
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role: "admin", pin }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { token: string };
-    return { token: data.token };
-  } catch {
-    return null;
-  }
+  const headers = new Headers(options.headers);
+  if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  return fetch(url, { ...options, credentials: "same-origin", headers });
 }
 async function uploadImage(file: File): Promise<string> {
   const form = new FormData();
   form.append("image", file);
   const res = await fetch(`${API_BASE}/upload`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${getToken()}` },
+    credentials: "same-origin",
     body: form,
   });
   if (!res.ok) throw new Error("Upload failed");
@@ -203,108 +182,23 @@ function t(key: string, lang: AdminLang): string {
   return T[key]?.[lang] ?? key;
 }
 
-/* ═══════════════════════ LOGIN PAGE ═══════════════════════ */
 export default function AdminPage() {
-  const [pin, setPin] = useState("");
-  const [isLogged, setIsLogged] = useState(() => !!getToken());
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { signOut } = useClerk();
   const [, navigate] = useLocation();
   const [lang, setLang] = useState<AdminLang>(() => {
     try { const s = localStorage.getItem("admin_lang") as AdminLang; return (s === "en" || s === "am" || s === "om") ? s : "en"; } catch { return "en"; }
   });
   const updateLang = (l: AdminLang) => { setLang(l); try { localStorage.setItem("admin_lang", l); } catch {} };
-
-  useEffect(() => {
-    const handleAuthExpired = () => setIsLogged(false);
-    window.addEventListener("admin-auth-expired", handleAuthExpired);
-    return () => window.removeEventListener("admin-auth-expired", handleAuthExpired);
-  }, []);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    const result = await signInWithPin(pin);
-    setLoading(false);
-    if (result) {
-      storeToken(result.token);
-      setIsLogged(true);
-    } else {
-      setError(t("wrongPin", lang));
-      setPin("");
-    }
-  };
-
-  if (!isLogged) {
-    return (
-      <div className="min-h-[100dvh] bg-[#F8F5F0] flex items-center justify-center p-4"
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-[600px] h-[600px] rounded-full bg-[#C1440E]/5" />
-          <div className="absolute -bottom-40 -left-40 w-[500px] h-[500px] rounded-full bg-[#1B2A4A]/5" />
-        </div>
-        <button
-          onClick={() => updateLang(lang === "en" ? "am" : lang === "am" ? "om" : "en")}
-          className="absolute top-4 right-4 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-200 rounded-full text-xs font-bold text-stone-600 shadow-sm touch-manipulation"
-        >
-          {lang === "en" ? "🇬🇧 EN" : lang === "am" ? "🇪🇹 AM" : "🇪🇹 OM"}
-        </button>
-        <div className="relative w-full max-w-sm">
-          <div className="bg-white rounded-3xl shadow-2xl shadow-stone-200/80 overflow-hidden">
-            <div className="bg-[#0f172a] px-8 py-6 text-center">
-              <h2 className="text-white text-lg font-bold tracking-wide">{t("loginTitle", lang)}</h2>
-            </div>
-            <div className="px-6 sm:px-8 py-8">
-              <div className="mb-6 text-center">
-                <p className="text-stone-400 text-sm">{t("loginSub", lang)}</p>
-              </div>
-              <form onSubmit={handleLogin} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-500 mb-1.5 uppercase tracking-wide">Admin PIN</label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    value={pin}
-                    onChange={e => setPin(e.target.value)}
-                    placeholder="••••"
-                    className="w-full border-2 border-stone-200 focus:border-[#C1440E] bg-stone-50 text-[#1B2A4A] rounded-2xl px-4 py-3.5 outline-none transition-colors text-sm text-center tracking-widest"
-                    autoFocus
-                    autoComplete="off"
-                    required
-                  />
-                </div>
-                <AnimatePresence>
-                  {error && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="flex items-center gap-2 text-red-600 bg-red-50 border border-red-100 px-4 py-3 rounded-xl text-sm"
-                    >
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <button
-                  type="submit"
-                  disabled={loading || !pin}
-                  className="w-full bg-[#C1440E] hover:bg-[#a83a0c] active:bg-[#a83a0c] text-white font-semibold py-4 rounded-2xl transition-colors disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-[#C1440E]/20 touch-manipulation mt-1"
-                >
-                  {loading ? <><Circle className="w-4 h-4 animate-spin" />{t("verifying", lang)}</> : t("loginBtn", lang)}
-                </button>
-              </form>
-              <button onClick={() => navigate("/")} className="w-full text-stone-400 hover:text-stone-600 text-sm py-3 mt-3 transition-colors touch-manipulation">
-                {t("backHome", lang)}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return <AdminDashboard lang={lang} updateLang={updateLang} onLogout={async () => { clearToken(); setIsLogged(false); navigate("/"); }} />;
+  return (
+    <AdminDashboard
+      lang={lang}
+      updateLang={updateLang}
+      onLogout={async () => {
+        await signOut();
+        navigate("/");
+      }}
+    />
+  );
 }
 
 /* ═══════════════════════ LAYOUT ═══════════════════════ */
@@ -855,24 +749,24 @@ function RestaurantCharts({ orders, lang }: { orders: OrderData[]; lang: AdminLa
 }
 
 function DashboardTab({ setActiveTab, lang }: { setActiveTab: (t: Tab) => void; lang: AdminLang }) {
-  const { data: menu = [] }   = useQuery<MenuItem[]>({ queryKey: ["admin-menu"],   queryFn: async () => { const r = await fetch(`${API_BASE}/menu`, { cache: "no-store" }); const data = await r.json(); return Array.isArray(data) ? data : []; }, placeholderData: INITIAL_MENU as unknown as MenuItem[], staleTime: 0, gcTime: 30 * 60_000 });
+  const { data: menu = [] }   = useQuery<MenuItem[]>({ queryKey: ["admin-menu"],   queryFn: async () => { const r = await authFetch(`${API_BASE}/menu`, { cache: "no-store" }); const data = await r.json(); return Array.isArray(data) ? data : []; }, placeholderData: INITIAL_MENU as unknown as MenuItem[], staleTime: 0, gcTime: 30 * 60_000 });
   const { data: tables = [] } = useQuery<Table[]>({    queryKey: ["admin-tables"], queryFn: async () => { const r = await authFetch(`${API_BASE}/tables`, { cache: "no-store" }); const data = await r.json(); return Array.isArray(data) ? data : []; }, staleTime: 0, gcTime: 30 * 60_000 });
 
   const { data: orders = [] } = useQuery<OrderData[]>({
     queryKey: ["admin-orders-dash"],
     queryFn: async () => {
-      const r = await authFetch(`${API_BASE}/orders`);
+      const r = await authFetch(`${API_BASE}/orders?includeArchived=1`);
       if (!r.ok) return [];
       return r.json();
     },
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 4_000,
   });
 
   const { data: popular = [], isLoading: popularLoading } = useQuery<PopularItem[]>({
     queryKey: ["admin-popular"],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE}/menu-stats/popular?limit=10`);
+      const r = await authFetch(`${API_BASE}/menu-stats/popular?limit=10`);
       if (!r.ok) return [];
       const raw = await r.json() as PopularItem[];
       const menuMap = new Map((menu as MenuItem[]).map((m: MenuItem) => [m.id, m]));
@@ -888,7 +782,7 @@ function DashboardTab({ setActiveTab, lang }: { setActiveTab: (t: Tab) => void; 
     },
     enabled: menu.length > 0,
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 4_000,
   });
 
   const occupiedTables = tables.filter(tb => tb.status === "occupied").length;
@@ -1081,13 +975,13 @@ function MenuTab({ lang }: { lang: AdminLang }) {
 
   const { data: menu = [] } = useQuery<MenuItem[]>({
     queryKey: ["admin-menu"],
-    queryFn: async () => { const r = await fetch(`${API_BASE}/menu?showHidden=1`); return r.json(); },
+    queryFn: async () => { const r = await authFetch(`${API_BASE}/menu?showHidden=1`); return r.json(); },
     placeholderData: INITIAL_MENU as unknown as MenuItem[],
     staleTime: 30_000,
   });
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["admin-categories"],
-    queryFn: async () => { const r = await fetch(`${API_BASE}/categories`); return r.json(); },
+    queryFn: async () => { const r = await authFetch(`${API_BASE}/categories`); return r.json(); },
     placeholderData: INITIAL_CATEGORIES as unknown as Category[],
     staleTime: 30_000,
   });
@@ -1717,7 +1611,7 @@ function CategoriesTab({ lang }: { lang: AdminLang }) {
   const [editCat, setEditCat]   = useState<Category | null>(null);
   const [form, setForm]         = useState({ id: "", en: "", am: "", om: "" });
 
-  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["admin-categories"], queryFn: async () => { const r = await fetch(`${API_BASE}/categories`, { cache: "no-store" }); return r.json(); }, placeholderData: INITIAL_CATEGORIES as unknown as Category[], staleTime: 0, gcTime: 30 * 60_000 });
+  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["admin-categories"], queryFn: async () => { const r = await authFetch(`${API_BASE}/categories`, { cache: "no-store" }); return r.json(); }, placeholderData: INITIAL_CATEGORIES as unknown as Category[], staleTime: 0, gcTime: 30 * 60_000 });
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
       const isEdit = !!editCat;
@@ -1729,10 +1623,28 @@ function CategoriesTab({ lang }: { lang: AdminLang }) {
     mutationFn: async (id: string) => { await authFetch(`${API_BASE}/categories/${id}`, { method: "DELETE" }); },
     onSuccess: async () => { await queryClient.refetchQueries({ queryKey: ["admin-categories"] }); }
   });
+  const reorderMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const response = await authFetch(`${API_BASE}/categories/reorder`, {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) throw new Error("Could not reorder categories");
+      return response.json() as Promise<Category[]>;
+    },
+    onSuccess: (updated) => queryClient.setQueryData(["admin-categories"], updated),
+  });
 
   function openAdd() { setEditCat(null); setForm({ id: "", en: "", am: "", om: "" }); setShowForm(true); }
 
   const catName = (cat: Category) => cat.name?.[lang] || cat.name?.en || cat.id;
+  function moveCategory(index: number, offset: -1 | 1) {
+    const next = [...categories];
+    const target = index + offset;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    reorderMutation.mutate(next.map((category) => category.id));
+  }
 
   return (
     <div className="w-full space-y-4">
@@ -1818,9 +1730,10 @@ function CategoriesTab({ lang }: { lang: AdminLang }) {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => {
-                    const base = form.en || form.am || `cat-${Date.now()}`;
-                    const id = editCat?.id || base.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").slice(0, 48) || `cat-${Date.now()}`;
-                    saveMutation.mutate({ id, name: { en: form.en, am: form.am, om: form.om || undefined }, order: editCat?.order || categories.length + 1 });
+                    saveMutation.mutate({
+                      name: { en: form.en, am: form.am, om: form.om || undefined },
+                      ...(editCat ? { order: editCat.order } : {}),
+                    });
                   }}
                   disabled={saveMutation.isPending || !form.en}
                   className="flex items-center gap-2 bg-[#C1440E] hover:bg-[#a83a0c] text-white px-5 py-2.5 rounded-xl font-semibold text-sm disabled:opacity-40 transition-colors touch-manipulation"
@@ -1865,6 +1778,22 @@ function CategoriesTab({ lang }: { lang: AdminLang }) {
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
                   <button
+                    onClick={() => moveCategory(i, -1)}
+                    disabled={i === 0 || reorderMutation.isPending}
+                    aria-label="Move category up"
+                    className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors touch-manipulation disabled:opacity-30"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+                  </button>
+                  <button
+                    onClick={() => moveCategory(i, 1)}
+                    disabled={i === categories.length - 1 || reorderMutation.isPending}
+                    aria-label="Move category down"
+                    className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors touch-manipulation disabled:opacity-30"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  <button
                     onClick={() => {
                       if (editCat?.id === cat.id && showForm) { setShowForm(false); setEditCat(null); return; }
                       setEditCat(cat);
@@ -1904,7 +1833,7 @@ function TablesTab({ lang }: { lang: AdminLang }) {
 
   const { data: tables = [] } = useQuery<Table[]>({ queryKey: ["admin-tables"], queryFn: async () => { const r = await authFetch(`${API_BASE}/tables`, { cache: "no-store" }); return r.json(); }, staleTime: 0 });
   const addMutation = useMutation({
-    mutationFn: async () => { await authFetch(`${API_BASE}/tables`, { method: "POST", body: JSON.stringify({ name: `Table ${(tables.length || 0) + 1}`, location: newLoc || "Indoor" }) }); },
+    mutationFn: async () => { await authFetch(`${API_BASE}/tables`, { method: "POST", body: JSON.stringify({ location: newLoc || "Indoor" }) }); },
     onSuccess: async () => { await queryClient.refetchQueries({ queryKey: ["admin-tables"] }); setShowAdd(false); setNewLoc(""); }
   });
   const deleteMutation = useMutation({
@@ -2105,7 +2034,7 @@ function ReviewsTab({ lang }: { lang: AdminLang }) {
     queryKey: ["admin-reviews"],
     queryFn: async () => { const r = await authFetch(`${API_BASE}/reviews`); const data = await r.json(); return Array.isArray(data) ? data : []; },
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 4_000,
   });
 
   const deleteMutation = useMutation({
@@ -2228,9 +2157,6 @@ function SettingsTab({ lang }: { lang: AdminLang }) {
   const [restaurantName, setRestaurantName] = useState("");
   const [restaurantNameSaving, setRestaurantNameSaving] = useState(false);
   const [restaurantNameMsg, setRestaurantNameMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [waiterForm, setWaiterForm] = useState({ next: "", confirm: "" });
-  const [waiterMsg, setWaiterMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [waiterSaving, setWaiterSaving] = useState(false);
 
   useEffect(() => {
     authFetch(`${API_BASE}/settings`)
@@ -2263,28 +2189,8 @@ function SettingsTab({ lang }: { lang: AdminLang }) {
     }
     setRestaurantNameMsg({
       ok: res.ok,
-      text: res.ok ? t("restaurantNameSaved", lang) : t("pinWrong", lang),
+      text: res.ok ? t("restaurantNameSaved", lang) : "Could not save restaurant settings.",
     });
-  }
-
-  async function changeWaiterPin(e: React.FormEvent) {
-    e.preventDefault();
-    setWaiterMsg(null);
-    if (waiterForm.next.length < 4) { setWaiterMsg({ ok: false, text: t("pinMinLen", lang) }); return; }
-    if (waiterForm.next !== waiterForm.confirm) { setWaiterMsg({ ok: false, text: t("pinMismatch", lang) }); return; }
-    setWaiterSaving(true);
-    const res = await fetch(`${API_BASE}/settings`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${getToken()}` },
-      body: JSON.stringify({ newWaiterPin: waiterForm.next }),
-    });
-    setWaiterSaving(false);
-    if (res.ok) {
-      setWaiterMsg({ ok: true, text: t("pinChanged", lang) });
-      setWaiterForm({ next: "", confirm: "" });
-    } else {
-      setWaiterMsg({ ok: false, text: t("pinWrong", lang) });
-    }
   }
 
   return (
@@ -2337,71 +2243,6 @@ function SettingsTab({ lang }: { lang: AdminLang }) {
         </form>
       </div>
 
-      {/* ── Waiter PIN card ── */}
-      <div className="mt-8 mb-6">
-        <h2 className="text-lg font-bold text-[#1B2A4A] flex items-center gap-2">
-          <KeyRound className="w-5 h-5 text-[#C1440E]" />
-          {t("waiterPinLabel", lang)}
-        </h2>
-        <p className="text-sm text-slate-400 mt-0.5 ml-7">
-          {lang === "en" ? "PIN used by waiters to access the waiter panel" : lang === "am" ? "አስተናጋጆች ወደ ፓነሉ ለመግባት የሚጠቀሙት PIN" : "PIN qoree bitootni panala seenuuf fayyadaman"}
-        </p>
-      </div>
-
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-        <form onSubmit={changeWaiterPin} className="p-6 space-y-4">
-
-          <div>
-            <label className="text-xs font-semibold text-slate-500 mb-2 block uppercase tracking-wide">{t("newPin", lang)}</label>
-            <input
-              type="password"
-              inputMode="numeric"
-              value={waiterForm.next}
-              onChange={e => setWaiterForm(f => ({ ...f, next: e.target.value.replace(/\D/g, "").slice(0, 12) }))}
-              placeholder="• • • •"
-              className="w-full bg-slate-50 border-2 border-slate-200 focus:border-[#C1440E] rounded-2xl px-4 py-3.5 text-center text-2xl tracking-[0.5em] font-bold text-[#1B2A4A] outline-none transition-colors placeholder:text-slate-300 placeholder:tracking-[0.4em] placeholder:text-xl"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-500 mb-2 block uppercase tracking-wide">{t("confirmNewPin", lang)}</label>
-            <input
-              type="password"
-              inputMode="numeric"
-              value={waiterForm.confirm}
-              onChange={e => setWaiterForm(f => ({ ...f, confirm: e.target.value.replace(/\D/g, "").slice(0, 12) }))}
-              placeholder="• • • •"
-              className="w-full bg-slate-50 border-2 border-slate-200 focus:border-[#C1440E] rounded-2xl px-4 py-3.5 text-center text-2xl tracking-[0.5em] font-bold text-[#1B2A4A] outline-none transition-colors placeholder:text-slate-300 placeholder:tracking-[0.4em] placeholder:text-xl"
-            />
-          </div>
-
-          <AnimatePresence>
-            {waiterMsg && (
-              <motion.div
-                initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-medium",
-                  waiterMsg.ok ? "bg-green-50 text-green-700 border border-green-100" : "bg-red-50 text-red-600 border border-red-100"
-                )}
-              >
-                {waiterMsg.ok ? <Check className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
-                {waiterMsg.text}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <button
-            type="submit"
-            disabled={waiterSaving || !waiterForm.next || !waiterForm.confirm}
-            className="w-full bg-[#1B2A4A] hover:bg-[#243760] active:scale-[0.98] text-white font-semibold py-3.5 rounded-2xl text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-[#1B2A4A]/20 touch-manipulation"
-          >
-            {waiterSaving
-              ? <><Circle className="w-4 h-4 animate-spin" />{t("changing", lang)}</>
-              : <><Save className="w-4 h-4" />{t("changePin", lang)}</>
-            }
-          </button>
-        </form>
-      </div>
     </div>
   );
 }

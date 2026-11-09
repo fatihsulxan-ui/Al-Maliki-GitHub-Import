@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Switch, Route, Redirect, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ClerkProvider, SignIn, SignUp, useAuth } from "@clerk/react";
+import { ClerkProvider, SignIn, useAuth } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
 import { Toaster } from "@/components/ui/toaster";
@@ -185,25 +185,58 @@ function StaffLanding() {
   );
 }
 
-function ProtectedPage({ children }: { children: React.ReactNode }) {
+function ProtectedPage({ children, requiredRole }: { children: React.ReactNode; requiredRole: "admin" | "waiter" }) {
   const { isLoaded, isSignedIn } = useAuth();
+  const [access, setAccess] = useState<"loading" | "allowed" | "denied">("loading");
+  const [role, setRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    let cancelled = false;
+    fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Access check failed");
+        return await response.json() as { authenticated: boolean; role: string | null };
+      })
+      .then((result) => {
+        if (cancelled) return;
+        setRole(result.role);
+        setAccess(result.authenticated && result.role === requiredRole ? "allowed" : "denied");
+      })
+      .catch(() => {
+        if (!cancelled) setAccess("denied");
+      });
+    return () => { cancelled = true; };
+  }, [isLoaded, isSignedIn, requiredRole]);
+
   if (!isLoaded) return <PageLoading />;
   if (!isSignedIn) return <Redirect to="/sign-in" />;
+  if (access === "loading") return <PageLoading />;
+  if (access === "denied") {
+    return (
+      <div className="min-h-[100dvh] bg-[#F8F5F0] flex items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl shadow-stone-200/80 p-8 text-center">
+          <h1 className="text-[#1B2A4A] text-lg font-bold">Access not available</h1>
+          <p className="text-stone-500 text-sm mt-3">
+            {role
+              ? "You do not have access to this page."
+              : "You do not have permission yet. An administrator must assign you a staff role."}
+          </p>
+        </div>
+      </div>
+    );
+  }
   return <>{children}</>;
 }
 
 function SignInPage() {
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
-      <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} />
-    </div>
-  );
-}
-
-function SignUpPage() {
-  return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
-      <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} />
+      <SignIn
+        routing="path"
+        path={`${basePath}/sign-in`}
+        signUpUrl={`${basePath}/sign-in`}
+      />
     </div>
   );
 }
@@ -215,12 +248,12 @@ function Router() {
         <Route path="/" component={StaffLanding} />
         <Route path="/masa/:tableId" component={MenuPage} />
         <Route path="/sign-in/*?" component={SignInPage} />
-        <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/sign-up/*?" component={() => <Redirect to="/sign-in" />} />
         <Route path="/garson">
-          <ProtectedPage><WaiterPage /></ProtectedPage>
+          <ProtectedPage requiredRole="waiter"><WaiterPage /></ProtectedPage>
         </Route>
         <Route path="/admin">
-          <ProtectedPage><AdminPage /></ProtectedPage>
+          <ProtectedPage requiredRole="admin"><AdminPage /></ProtectedPage>
         </Route>
         <Route component={NotFound} />
       </Switch>
@@ -274,10 +307,8 @@ function App() {
         },
       }}
       signInUrl={`${basePath}/sign-in`}
-      signUpUrl={`${basePath}/sign-up`}
       localization={{
-        signIn: { start: { title: "ARAB ALI HOTEL'e giriş yap", subtitle: "Personel paneline erişmek için Google ile devam edin" } },
-        signUp: { start: { title: "Personel hesabı oluştur", subtitle: "ARAB ALI HOTEL yönetimine başlamak için kaydolun" } },
+        signIn: { start: { title: "Sign in to ARAB ALI HOTEL", subtitle: "Continue with Google to access the staff dashboard" } },
       }}
     >
       <QueryClientProvider client={queryClient}>

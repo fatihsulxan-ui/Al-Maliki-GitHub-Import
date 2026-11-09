@@ -65,9 +65,15 @@ async function getStaffRole(userId: string, claims: any): Promise<"admin" | "wai
 
 export async function authMiddleware(req: any, res: any, next: any) {
   const auth = getAuth(req);
-  if (!auth.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!auth.userId) {
+    res.status(401).json({ error: "Sign in with your Clerk account to continue." });
+    return;
+  }
   const role = await getStaffRole(auth.userId, auth.sessionClaims);
-  if (!role) { res.status(403).json({ error: "Staff role is not configured" }); return; }
+  if (!role) {
+    res.status(403).json({ error: "You do not have permission yet. Ask an administrator to assign you a staff role." });
+    return;
+  }
   req.userId = auth.userId;
   req.userRole = role;
   next();
@@ -76,9 +82,19 @@ export async function authMiddleware(req: any, res: any, next: any) {
 /** Admin routes require a signed-in Clerk user with publicMetadata.role=admin. */
 export async function adminOnly(req: any, res: any, next: any) {
   const auth = getAuth(req);
-  if (!auth.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!auth.userId) {
+    res.status(401).json({ error: "Sign in with your Clerk account to continue." });
+    return;
+  }
   const role = await getStaffRole(auth.userId, auth.sessionClaims);
-  if (role !== "admin") { res.status(403).json({ error: "Admin role required" }); return; }
+  if (role !== "admin") {
+    res.status(403).json({
+      error: role
+        ? "Administrator access is required."
+        : "You do not have permission yet. Ask an administrator to assign you the admin role.",
+    });
+    return;
+  }
   req.userId = auth.userId;
   req.userRole = role;
   next();
