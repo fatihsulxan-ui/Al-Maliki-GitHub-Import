@@ -185,7 +185,65 @@ function StaffLanding() {
   );
 }
 
+function ClerkBoundary({ children }: { children: React.ReactNode }) {
+  return (
+    <ClerkProvider
+      publishableKey={clerkPubKey}
+      proxyUrl={clerkProxyUrl}
+      appearance={{
+        theme: shadcn,
+        cssLayerName: "clerk",
+        options: {
+          logoPlacement: "inside",
+          logoLinkUrl: basePath || "/",
+          logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+        },
+        variables: {
+          colorPrimary: "#1B2A4A",
+          colorForeground: "#1B2A4A",
+          colorMutedForeground: "#6B7280",
+          colorBackground: "#FFFFFF",
+          colorInput: "#F8F5F0",
+          colorInputForeground: "#1B2A4A",
+          colorNeutral: "#E5E1DB",
+          fontFamily: "Inter, sans-serif",
+          borderRadius: "1rem",
+        },
+        elements: {
+          rootBox: "w-full flex justify-center",
+          cardBox: "bg-white rounded-3xl w-[440px] max-w-full overflow-hidden shadow-2xl",
+          card: "!shadow-none !border-0 !bg-transparent !rounded-none",
+          footer: "!shadow-none !border-0 !bg-transparent !rounded-none",
+          headerTitle: "text-[#1B2A4A]",
+          headerSubtitle: "text-stone-500",
+          socialButtonsBlockButtonText: "text-[#1B2A4A]",
+          formFieldLabel: "text-[#1B2A4A]",
+          footerActionLink: "text-[#C1440E]",
+          footerActionText: "text-stone-500",
+          dividerText: "text-stone-400",
+          formButtonPrimary: "bg-[#1B2A4A] hover:bg-[#243760]",
+          formFieldInput: "bg-[#F8F5F0] border-stone-200 text-[#1B2A4A]",
+        },
+      }}
+      signInUrl={`${basePath}/sign-in`}
+      localization={{
+        signIn: { start: { title: "Sign in to ARAB ALI HOTEL", subtitle: "Continue with Google to access the staff dashboard" } },
+      }}
+    >
+      {children}
+    </ClerkProvider>
+  );
+}
+
 function ProtectedPage({ children, requiredRole }: { children: React.ReactNode; requiredRole: "admin" | "waiter" }) {
+  return (
+    <ClerkBoundary>
+      <ProtectedPageContent requiredRole={requiredRole}>{children}</ProtectedPageContent>
+    </ClerkBoundary>
+  );
+}
+
+function ProtectedPageContent({ children, requiredRole }: { children: React.ReactNode; requiredRole: "admin" | "waiter" }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [access, setAccess] = useState<"loading" | "allowed" | "denied">("loading");
   const [role, setRole] = useState<string | null>(null);
@@ -231,13 +289,15 @@ function ProtectedPage({ children, requiredRole }: { children: React.ReactNode; 
 
 function SignInPage() {
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
-      <SignIn
-        routing="path"
-        path={`${basePath}/sign-in`}
-        signUpUrl={`${basePath}/sign-in`}
-      />
-    </div>
+    <ClerkBoundary>
+      <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
+        <SignIn
+          routing="path"
+          path={`${basePath}/sign-in`}
+          signUpUrl={`${basePath}/sign-in`}
+        />
+      </div>
+    </ClerkBoundary>
   );
 }
 
@@ -246,6 +306,7 @@ function Router() {
     <Suspense fallback={<PageLoading />}>
       <Switch>
         <Route path="/" component={StaffLanding} />
+        <Route path="/masa" component={MenuPage} />
         <Route path="/masa/:tableId" component={MenuPage} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={() => <Redirect to="/sign-in" />} />
@@ -268,58 +329,14 @@ function App() {
   }, []);
 
   return (
-    <ClerkProvider
-      publishableKey={clerkPubKey}
-      proxyUrl={clerkProxyUrl}
-      appearance={{
-        theme: shadcn,
-        cssLayerName: "clerk",
-        options: {
-          logoPlacement: "inside",
-          logoLinkUrl: basePath || "/",
-          logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
-        },
-        variables: {
-          colorPrimary: "#1B2A4A",
-          colorForeground: "#1B2A4A",
-          colorMutedForeground: "#6B7280",
-          colorBackground: "#FFFFFF",
-          colorInput: "#F8F5F0",
-          colorInputForeground: "#1B2A4A",
-          colorNeutral: "#E5E1DB",
-          fontFamily: "Inter, sans-serif",
-          borderRadius: "1rem",
-        },
-        elements: {
-          rootBox: "w-full flex justify-center",
-          cardBox: "bg-white rounded-3xl w-[440px] max-w-full overflow-hidden shadow-2xl",
-          card: "!shadow-none !border-0 !bg-transparent !rounded-none",
-          footer: "!shadow-none !border-0 !bg-transparent !rounded-none",
-          headerTitle: "text-[#1B2A4A]",
-          headerSubtitle: "text-stone-500",
-          socialButtonsBlockButtonText: "text-[#1B2A4A]",
-          formFieldLabel: "text-[#1B2A4A]",
-          footerActionLink: "text-[#C1440E]",
-          footerActionText: "text-stone-500",
-          dividerText: "text-stone-400",
-          formButtonPrimary: "bg-[#1B2A4A] hover:bg-[#243760]",
-          formFieldInput: "bg-[#F8F5F0] border-stone-200 text-[#1B2A4A]",
-        },
-      }}
-      signInUrl={`${basePath}/sign-in`}
-      localization={{
-        signIn: { start: { title: "Sign in to ARAB ALI HOTEL", subtitle: "Continue with Google to access the staff dashboard" } },
-      }}
-    >
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <WouterRouter base={basePath}>
-            <Router />
-          </WouterRouter>
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </ClerkProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <WouterRouter base={basePath}>
+          <Router />
+        </WouterRouter>
+        <Toaster />
+      </TooltipProvider>
+    </QueryClientProvider>
   );
 }
 

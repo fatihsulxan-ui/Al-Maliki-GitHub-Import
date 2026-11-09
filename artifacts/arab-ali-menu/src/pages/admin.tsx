@@ -1853,7 +1853,8 @@ function TablesTab({ lang }: { lang: AdminLang }) {
   };
 
   function getQrUrl(tableId: string) {
-    return `${window.location.origin}/masa/${tableId}?qr=true`;
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+    return `${window.location.origin}${basePath}/masa/${encodeURIComponent(tableId)}?qr=true`;
   }
 
   function downloadQr(tableId: string, tableNumber: number) {
